@@ -8,7 +8,7 @@ import { toast } from "sonner";
 
 import { dictionaries, detectLocale, fmt, type Locale } from "@/i18n/locales";
 import { sessionRegistry } from "@/lib/session-registry";
-import { ptyList, shellsDetect } from "@/lib/pty";
+import { forceClose, ptyList, shellsDetect, shutdownSessions } from "@/lib/pty";
 import { DEFAULT_SETTINGS, type AppConfig, type AppSettings, type SessionStatus, type ShellInfo, type ShellKind } from "@/types";
 
 export type View = "apps" | "terminals" | "processes" | "settings";
@@ -43,11 +43,15 @@ interface AppState {
   locale: Locale;
   settings: AppSettings;
   closePromptOpen: boolean;
+  /** Graceful shutdown in progress ("closing sessions…" overlay). */
+  shuttingDown: boolean;
 
   hydrate: () => Promise<void>;
   setLocale: (locale: Locale) => Promise<void>;
   setSettings: (patch: Partial<AppSettings>) => Promise<void>;
   setClosePrompt: (open: boolean) => void;
+  /** Graceful app exit: kill all sessions quietly, then close the window. */
+  shutdownAndExit: () => Promise<void>;
   setView: (view: View) => void;
 
   openEditor: (app: AppConfig | null) => void;
@@ -82,8 +86,20 @@ export const useAppStore = create<AppState>()((set, get) => ({
   locale: detectLocale(),
   settings: { ...DEFAULT_SETTINGS },
   closePromptOpen: false,
+  shuttingDown: false,
 
   setClosePrompt: (open) => set({ closePromptOpen: open }),
+
+  shutdownAndExit: async () => {
+    if (get().shuttingDown) return;
+    set({ shuttingDown: true, closePromptOpen: false });
+    try {
+      await shutdownSessions();
+    } catch {
+      /* best effort — force exit regardless */
+    }
+    await forceClose().catch(() => {});
+  },
 
   setSettings: async (patch) => {
     const settings = { ...get().settings, ...patch };

@@ -74,6 +74,15 @@ export function forceClose(): Promise<void> {
   return invoke("close_force");
 }
 
+/**
+ * Graceful shutdown: kill every session tree (parents first, quiet, exit
+ * code reported as 0) and wait until nothing is left. Resolves when the
+ * backend is done (bounded wait), so the caller can then `forceClose()`.
+ */
+export function shutdownSessions(): Promise<void> {
+  return invoke("shutdown_sessions");
+}
+
 /** Fired by the native close guard with the number of running sessions. */
 export function listenCloseBlocked(handler: (running: number) => void): Promise<UnlistenFn> {
   return listen<number>(CLOSE_BLOCKED_EVENT, (e) => handler(e.payload));

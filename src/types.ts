@@ -53,6 +53,8 @@ export interface SessionStatus {
   state: SessionState;
   exitCode?: number;
   pid?: number;
+  /** True when killed by the user (stop/close) instead of exiting naturally. */
+  killed?: boolean;
   /** TCP ports the session's process tree listens on (live-updated). */
   ports?: number[];
   /** Whether the last health‑check passed (undefined = no check configured). */

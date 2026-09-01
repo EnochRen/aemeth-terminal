@@ -7,11 +7,10 @@ mod shells;
 use pty::{AppSpec, PtyManager, SessionStatus};
 use shells::ShellInfo;
 use tauri::{Emitter, Manager};
-use tauri_plugin_store::StoreExt;
 
-const STORE_FILE: &str = "aemeth.json";
-/// Emitted to the frontend when a close request is blocked pending
-/// confirmation. The frontend answers with `close_force` (or cancels).
+/// Emitted to the frontend when a close request is blocked because sessions
+/// are still running. The frontend decides the UX (confirm dialog and/or
+/// shutdown overlay) and answers with `shutdown_sessions` + `close_force`.
 const EVENT_CLOSE_BLOCKED: &str = "aemeth://close-blocked";
 
 #[tauri::command]
@@ -94,6 +93,20 @@ fn close_force(window: tauri::Window, manager: tauri::State<PtyManager>) {
     let _ = window.destroy();
 }
 
+/// Graceful shutdown step: kill every session tree (parents first, exit code
+/// normalized to 0) and wait for the reapers to finish, so nothing survives
+/// the window. Called by the frontend's shutdown overlay before `close_force`.
+#[tauri::command]
+async fn shutdown_sessions(manager: tauri::State<'_, PtyManager>) -> Result<(), String> {
+    let manager = manager.inner().clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        manager.close_all();
+        manager.wait_idle(std::time::Duration::from_secs(5));
+    })
+    .await;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let manager = PtyManager::new();
@@ -114,7 +127,8 @@ pub fn run() {
             process_list,
             process_kill,
             process_detail,
-            close_force
+            close_force,
+            shutdown_sessions
         ])
         // Native close guard. If a JS `onCloseRequested` listener were
         // registered instead, Tauri would unconditionally veto the native
@@ -130,20 +144,11 @@ pub fn run() {
                 if running == 0 {
                     return;
                 }
-                // `settings.confirmClose` from the shared plugin store
-                // (defaults to true when the store isn't loaded yet).
-                let confirm = window
-                    .get_store(STORE_FILE)
-                    .and_then(|store| {
-                        store
-                            .get("settings")
-                            .and_then(|settings| settings.get("confirmClose").and_then(|v| v.as_bool()))
-                    })
-                    .unwrap_or(true);
-                if confirm {
-                    api.prevent_close();
-                    let _ = window.emit(EVENT_CLOSE_BLOCKED, running);
-                }
+                // Sessions are live: block the native close and hand the
+                // decision to the frontend (confirm dialog / shutdown
+                // overlay, depending on settings).
+                api.prevent_close();
+                let _ = window.emit(EVENT_CLOSE_BLOCKED, running);
             }
         })
         .build(tauri::generate_context!())

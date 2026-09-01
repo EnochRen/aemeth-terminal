@@ -6,7 +6,7 @@
 //! `pty_write`. The reaper thread observes process exit and emits `pty://exit`.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     io::{Read, Write},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -96,6 +96,11 @@ pub struct SessionStatus {
     pub exit_code: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
+    /// True when the session was killed by the user (stop/close) rather than
+    /// exiting on its own — the raw exit code of a force-killed process
+    /// (0xFFFFFFFF on Windows) is noise, so the UI shows this instead.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub killed: bool,
     pub started_at: u64,
 }
 
@@ -126,6 +131,9 @@ struct SessionHandle {
     pid: Option<u32>,
     started_at: u64,
     alive: AtomicBool,
+    /// Set by `close()` — distinguishes user-initiated kills from natural
+    /// exits in the emitted exit status.
+    killed: AtomicBool,
     health_check_url: Option<String>,
 }
 
@@ -229,6 +237,7 @@ impl PtyManager {
             state: SessionState::Running,
             exit_code: None,
             pid,
+            killed: false,
             started_at,
         };
 
@@ -242,6 +251,7 @@ impl PtyManager {
             pid,
             started_at,
             alive: AtomicBool::new(true),
+            killed: AtomicBool::new(false),
             health_check_url: spec.health_check_url.clone(),
         });
         self.inner
@@ -287,6 +297,11 @@ impl PtyManager {
                 .spawn(move || {
                     // The reaper owns the child exclusively — no lock needed.
                     let exit_code = child.wait().ok().map(|st| st.exit_code());
+                    let killed = handle.killed.load(Ordering::SeqCst);
+                    // A force-killed process exits with garbage (0xFFFFFFFF
+                    // on Windows). User-initiated kills are reported as a
+                    // clean 0, Electron-style — no scary exit codes in the UI.
+                    let exit_code = if killed { Some(0) } else { exit_code };
                     handle.alive.store(false, Ordering::SeqCst);
                     manager.inner.sessions.lock().remove(&session_id);
                     let _ = app.emit(
@@ -299,6 +314,7 @@ impl PtyManager {
                             state: SessionState::Exited,
                             exit_code,
                             pid: handle.pid,
+                            killed,
                             started_at: handle.started_at,
                         },
                     );
@@ -374,6 +390,7 @@ impl PtyManager {
     pub fn close(&self, session_id: &str) {
         let session = self.inner.sessions.lock().get(session_id).cloned();
         if let Some(session) = session {
+            session.killed.store(true, Ordering::SeqCst);
             // Kill the whole tree so services spawned by the shell (node,
             // yarn, vite, ...) don't survive the session.
             if let Some(pid) = session.pid {
@@ -411,6 +428,7 @@ impl PtyManager {
                 state: SessionState::Running,
                 exit_code: None,
                 pid: s.pid,
+                killed: false,
                 started_at: s.started_at,
             })
             .collect()
@@ -421,6 +439,19 @@ impl PtyManager {
         let ids: Vec<String> = self.inner.sessions.lock().keys().cloned().collect();
         for id in ids {
             self.close(&id);
+        }
+    }
+
+    /// Block until every session's reaper has finished (or the timeout
+    /// elapses). Lets the shutdown flow guarantee no stray processes before
+    /// the window is destroyed.
+    pub fn wait_idle(&self, timeout: Duration) {
+        let start = std::time::Instant::now();
+        while start.elapsed() < timeout {
+            if self.inner.sessions.lock().is_empty() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(25));
         }
     }
 
@@ -527,18 +558,32 @@ pub fn sessions_snapshot(manager: &PtyManager) -> Vec<(String, String, String)> 
         .collect()
 }
 
-/// Kill the process tree rooted at `pid` (shell + anything it spawned).
-/// `taskkill /T` is the only reliable way on Windows to reach grandchildren;
-/// TerminateProcess alone would orphan the user's services.
-#[cfg(windows)]
-fn kill_tree(pid: u32) {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let _ = std::process::Command::new("taskkill")
-        .args(["/T", "/F", "/PID", &pid.to_string()])
-        .creation_flags(CREATE_NO_WINDOW)
-        .status();
+/// Kill the process tree rooted at `pid`, **parents first**.
+///
+/// Wrappers like pnpm/npm print their `ELIFECYCLE` farewell only when they
+/// live to see their child die — killing the wrapper before its children
+/// keeps the terminal quiet. The session's reported exit code is normalized
+/// to 0 by the reaper (`killed` flag).
+fn kill_tree(root: u32) {
+    let system = sysinfo::System::new_all();
+    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
+    for (pid, proc) in system.processes() {
+        if let Some(parent) = proc.parent() {
+            children.entry(parent.as_u32()).or_default().push(pid.as_u32());
+        }
+    }
+    let mut queue = VecDeque::from([root]);
+    let mut seen = HashSet::from([root]);
+    while let Some(pid) = queue.pop_front() {
+        if let Some(proc) = system.process(sysinfo::Pid::from_u32(pid)) {
+            let _ = proc.kill();
+        }
+        if let Some(kids) = children.get(&pid) {
+            for &kid in kids {
+                if seen.insert(kid) {
+                    queue.push_back(kid);
+                }
+            }
+        }
+    }
 }
-
-#[cfg(not(windows))]
-fn kill_tree(_pid: u32) {}

@@ -23,24 +23,33 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useShortcuts } from "@/hooks/use-shortcuts";
 import { fmt } from "@/i18n/locales";
 import { useT } from "@/i18n/use-t";
-import { forceClose, listenCloseBlocked } from "@/lib/pty";
+import { listenCloseBlocked } from "@/lib/pty";
 import { useAppStore } from "@/store/use-app-store";
 
 export default function App() {
   const view = useAppStore((s) => s.view);
   const hydrated = useAppStore((s) => s.hydrated);
-
   useEffect(() => {
     void useAppStore.getState().hydrate();
   }, []);
 
-  // Native close guard (see lib.rs): Rust blocks the close and asks us to
-  // confirm when sessions are still running. We deliberately do NOT register
-  // a JS onCloseRequested listener — that would make Tauri route every close
-  // through the (potentially backlogged) webview event queue.
+  // Native close guard (see lib.rs): Rust blocks the close while sessions
+  // are running and asks us to handle the UX. With confirmClose on we show
+  // the confirm dialog first; otherwise we go straight to the shutdown
+  // overlay. We deliberately do NOT register a JS onCloseRequested listener —
+  // that would make Tauri route every close through the (potentially
+  // backlogged) webview event queue.
   useEffect(() => {
     let unlisten: (() => void) | null = null;
-    listenCloseBlocked(() => useAppStore.getState().setClosePrompt(true))
+    listenCloseBlocked(() => {
+      const s = useAppStore.getState();
+      if (s.shuttingDown) return;
+      if (s.settings.confirmClose) {
+        s.setClosePrompt(true);
+      } else {
+        void s.shutdownAndExit();
+      }
+    })
       .then((fn) => {
         unlisten = fn;
       })
@@ -52,7 +61,7 @@ export default function App() {
 
   return (
     <TooltipProvider delayDuration={250}>
-      <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+      <div className="relative flex h-screen flex-col overflow-hidden bg-background text-foreground">
         <TitleBar />
         <div className="flex min-h-0 flex-1">
           <Sidebar />
@@ -75,6 +84,7 @@ export default function App() {
       <AppDialog />
       <DeleteDialog />
       <CloseConfirmDialog />
+      <ShutdownOverlay />
       <Toaster richColors position="top-center" theme="dark" />
     </TooltipProvider>
   );
@@ -84,6 +94,7 @@ function CloseConfirmDialog() {
   const t = useT();
   const open = useAppStore((s) => s.closePromptOpen);
   const setClosePrompt = useAppStore((s) => s.setClosePrompt);
+  const shutdownAndExit = useAppStore((s) => s.shutdownAndExit);
   const running = useAppStore(
     (s) => Object.values(s.sessions).filter((x) => x.state === "running").length,
   );
@@ -97,12 +108,25 @@ function CloseConfirmDialog() {
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>{t.settings.closeCancel}</AlertDialogCancel>
-          <AlertDialogAction onClick={() => void forceClose()}>
+          <AlertDialogAction onClick={() => void shutdownAndExit()}>
             {t.settings.closeOk}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+/** Full-screen "shutting down" state shown while sessions are killed. */
+function ShutdownOverlay() {
+  const t = useT();
+  const shuttingDown = useAppStore((s) => s.shuttingDown);
+  if (!shuttingDown) return null;
+  return (
+    <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-background">
+      <div className="size-5 animate-spin rounded-full border-2 border-border border-t-foreground" />
+      <p className="font-mono text-xs text-muted-foreground">{t.app.shuttingDown}</p>
+    </div>
   );
 }
 

@@ -187,6 +187,7 @@ const zh = {
   },
   app: {
     loading: "加载中",
+    shuttingDown: "正在关闭会话…",
   },
   window: {
     minimize: "最小化",
@@ -397,6 +398,7 @@ const en: Dict = {
   },
   app: {
     loading: "loading",
+    shuttingDown: "Shutting down sessions…",
   },
   window: {
     minimize: "Minimize",
