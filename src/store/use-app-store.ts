@@ -11,7 +11,7 @@ import { sessionRegistry } from "@/lib/session-registry";
 import { ptyList, shellsDetect } from "@/lib/pty";
 import { DEFAULT_SETTINGS, type AppConfig, type AppSettings, type SessionStatus, type ShellInfo, type ShellKind } from "@/types";
 
-export type View = "apps" | "terminals" | "settings";
+export type View = "apps" | "terminals" | "processes" | "settings";
 
 const STORE_FILE = "aemeth.json";
 const APPS_KEY = "apps";
@@ -113,6 +113,13 @@ export const useAppStore = create<AppState>()((set, get) => ({
     await sessionRegistry.init();
     sessionRegistry.onStatus((appId, status) => {
       set((s) => ({ sessions: { ...s.sessions, [appId]: status } }));
+    });
+    sessionRegistry.onPorts((appId, ports) => {
+      set((s) => {
+        const current = s.sessions[appId];
+        if (!current) return {};
+        return { sessions: { ...s.sessions, [appId]: { ...current, ports } } };
+      });
     });
 
     const store = await getStore();

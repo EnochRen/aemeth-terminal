@@ -5,6 +5,7 @@ import { AppsView } from "@/components/apps/apps-view";
 import { DeleteDialog } from "@/components/apps/delete-dialog";
 import { Sidebar } from "@/components/layout/sidebar";
 import { TitleBar } from "@/components/layout/title-bar";
+import { ProcessesView } from "@/components/processes/processes-view";
 import { SettingsView } from "@/components/settings/settings-view";
 import { TerminalsView } from "@/components/terminals/terminals-view";
 import {
@@ -62,6 +63,8 @@ export default function App() {
               <AppsView />
             ) : view === "terminals" ? (
               <TerminalsView />
+            ) : view === "processes" ? (
+              <ProcessesView />
             ) : (
               <SettingsView />
             )}

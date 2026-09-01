@@ -96,8 +96,15 @@ export function AppCard({ app }: { app: AppConfig }) {
       {/* Row 2 — status line */}
       <div className="flex items-center justify-between px-4 pb-3 pt-1.5">
         <StatusPill session={session} />
-        {session?.pid !== undefined && session.state === "running" && (
-          <span className="font-mono text-[10.5px] text-[#666]">{fmt(t.card.pid, { pid: session.pid })}</span>
+        {running && (session?.pid !== undefined || (session.ports?.length ?? 0) > 0) && (
+          <span className="flex items-center gap-2 font-mono text-[10.5px] text-[#666]">
+            {(session.ports?.length ?? 0) > 0 && (
+              <span className="text-state-running" title={session.ports!.map((p) => `:${p}`).join(", ")}>
+                {session.ports!.map((p) => `:${p}`).join(" ")}
+              </span>
+            )}
+            {session.pid !== undefined && <span>{fmt(t.card.pid, { pid: session.pid })}</span>}
+          </span>
         )}
       </div>
 

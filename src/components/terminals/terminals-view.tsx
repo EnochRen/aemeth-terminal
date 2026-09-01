@@ -58,6 +58,9 @@ export function TerminalsView() {
             <span className="hidden font-mono text-[10.5px] text-[#525252] md:inline">
               {activeSession.shell}
               {activeSession.pid ? ` · pid ${activeSession.pid}` : ""}
+              {(activeSession.ports?.length ?? 0) > 0
+                ? ` · ${activeSession.ports!.map((p) => `:${p}`).join(" ")}`
+                : ""}
             </span>
           )}
           <DropdownMenu>

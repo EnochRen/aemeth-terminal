@@ -6,13 +6,13 @@
 //! `pty_write`. The reaper thread observes process exit and emits `pty://exit`.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::{Read, Write},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -25,6 +25,9 @@ use crate::shells::{resolve_shell, ShellKind};
 
 pub const EVENT_OUTPUT: &str = "pty://output";
 pub const EVENT_EXIT: &str = "pty://exit";
+pub const EVENT_PORTS: &str = "pty://ports";
+
+const PORTS_POLL_MS: u64 = 2000;
 
 const INITIAL_COLS: u16 = 110;
 const INITIAL_ROWS: u16 = 28;
@@ -91,6 +94,14 @@ struct OutputEvent {
     data: String,
 }
 
+/// TCP ports the session's process tree currently listens on.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PortsEvent {
+    session_id: String,
+    ports: Vec<u16>,
+}
+
 struct SessionHandle {
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
@@ -107,6 +118,8 @@ struct SessionHandle {
 #[derive(Default)]
 struct ManagerInner {
     sessions: Mutex<HashMap<String, Arc<SessionHandle>>>,
+    /// Last emitted ports per session, to suppress unchanged polls.
+    ports: Mutex<HashMap<String, Vec<u16>>>,
     /// Set once the user confirms the close-guard dialog; the next
     /// `CloseRequested` event is let through without interception.
     force_close: AtomicBool,
@@ -116,6 +129,7 @@ struct ManagerInner {
 #[derive(Clone, Default)]
 pub struct PtyManager {
     inner: Arc<ManagerInner>,
+    ticker_started: Arc<AtomicBool>,
 }
 
 fn now_ms() -> u64 {
@@ -267,6 +281,8 @@ impl PtyManager {
                 })?;
         }
 
+        self.ensure_ports_ticker(&app);
+
         // Preset command scheduler: types the configured lines into the shell.
         if !spec.commands.is_empty() {
             let handle = scheduler_handle;
@@ -381,6 +397,65 @@ impl PtyManager {
         for id in ids {
             self.close(&id);
         }
+    }
+
+    /// Spawn the background ports poller once.
+    fn ensure_ports_ticker(&self, app: &AppHandle) {
+        if self.ticker_started.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let manager = self.clone();
+        let app = app.clone();
+        let _ = std::thread::Builder::new()
+            .name("pty-ports".into())
+            .spawn(move || loop {
+                std::thread::sleep(Duration::from_millis(PORTS_POLL_MS));
+                manager.poll_ports(&app);
+            });
+    }
+
+    /// Recompute listening ports per session and emit `pty://ports` on change.
+    fn poll_ports(&self, app: &AppHandle) {
+        let targets: Vec<(String, u32)> = self
+            .inner
+            .sessions
+            .lock()
+            .iter()
+            .filter_map(|(id, h)| h.pid.map(|pid| (id.clone(), pid)))
+            .collect();
+        if targets.is_empty() {
+            self.inner.ports.lock().clear();
+            return;
+        }
+
+        let table = crate::ports::ProcessTable::snapshot();
+        let listeners = crate::ports::listening_ports();
+
+        let mut cache = self.inner.ports.lock();
+        let mut alive: HashSet<String> = HashSet::new();
+        for (session_id, pid) in targets {
+            alive.insert(session_id.clone());
+            let tree = table.descendants(pid);
+            let mut found: Vec<u16> = Vec::new();
+            for (listener, ports) in &listeners {
+                if tree.contains(listener) {
+                    found.extend_from_slice(ports);
+                }
+            }
+            found.sort_unstable();
+            found.dedup();
+            if cache.get(&session_id) != Some(&found) {
+                cache.insert(session_id.clone(), found.clone());
+                let _ = app.emit(
+                    EVENT_PORTS,
+                    PortsEvent {
+                        session_id: session_id.clone(),
+                        ports: found,
+                    },
+                );
+            }
+        }
+        cache.retain(|id, _| alive.contains(id));
     }
 }
 

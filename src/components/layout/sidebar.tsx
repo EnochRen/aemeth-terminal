@@ -1,4 +1,4 @@
-import { LayoutGrid, Plus, Settings, SquareTerminal } from "lucide-react";
+import { Cpu, LayoutGrid, Plus, Settings, SquareTerminal } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useT } from "@/i18n/use-t";
 import { cn } from "@/lib/utils";
@@ -32,6 +32,14 @@ export function Sidebar() {
               <span className="absolute -right-1 -top-0.5 size-1.5 rounded-full bg-state-running" />
             )}
           </span>
+        </RailButton>
+
+        <RailButton
+          active={view === "processes"}
+          label={t.sidebar.processes}
+          onClick={() => setView("processes")}
+        >
+          <Cpu className="size-4" strokeWidth={1.75} />
         </RailButton>
       </nav>
 

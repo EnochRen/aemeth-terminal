@@ -20,6 +20,7 @@ import {
   base64ToBytes,
   listenPtyExit,
   listenPtyOutput,
+  listenPtyPorts,
   ptyClose,
   ptyResize,
   ptyStart,
@@ -268,11 +269,13 @@ function concatBytes(chunks: Uint8Array[]): Uint8Array {
 }
 
 export type StatusListener = (appId: string, status: SessionStatus) => void;
+export type PortsListener = (appId: string, ports: number[]) => void;
 
 class SessionRegistry {
   private clients = new Map<string, SessionClient>(); // sessionId -> client
   private appToSession = new Map<string, string>(); // appId -> sessionId
   private statusListeners = new Set<StatusListener>();
+  private portsListeners = new Set<PortsListener>();
   private starting = new Set<string>();
   private initialized = false;
 
@@ -308,11 +311,22 @@ class SessionRegistry {
         this.emitStatus(status.appId, status);
       }
     });
+    await listenPtyPorts(({ sessionId, ports }) => {
+      const client = this.clients.get(sessionId);
+      if (!client) return;
+      client.status = { ...client.status, ports };
+      for (const listener of this.portsListeners) listener(client.app.id, ports);
+    });
   }
 
   onStatus(listener: StatusListener): () => void {
     this.statusListeners.add(listener);
     return () => this.statusListeners.delete(listener);
+  }
+
+  onPorts(listener: PortsListener): () => void {
+    this.portsListeners.add(listener);
+    return () => this.portsListeners.delete(listener);
   }
 
   private emitStatus(appId: string, status: SessionStatus): void {

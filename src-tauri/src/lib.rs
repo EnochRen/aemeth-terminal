@@ -1,3 +1,5 @@
+mod ports;
+mod procs;
 mod pty;
 mod shells;
 
@@ -62,6 +64,16 @@ fn write_text_file(path: String, content: String) -> Result<(), String> {
     std::fs::write(path, content).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn process_list() -> Vec<procs::ProcessInfo> {
+    procs::snapshot()
+}
+
+#[tauri::command]
+fn process_kill(pid: u32) -> Result<usize, String> {
+    procs::kill_tree(pid)
+}
+
 /// User confirmed the close-guard dialog: destroy the window natively.
 /// Deliberately bypasses the webview event queue so the close is instant
 /// even while sessions are streaming output.
@@ -87,6 +99,8 @@ pub fn run() {
             pty_list,
             shells_detect,
             write_text_file,
+            process_list,
+            process_kill,
             close_force
         ])
         // Native close guard. If a JS `onCloseRequested` listener were

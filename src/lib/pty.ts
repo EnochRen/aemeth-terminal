@@ -7,12 +7,19 @@ import type { AppConfig, SessionStatus, ShellInfo } from "@/types";
 
 export const PTY_OUTPUT_EVENT = "pty://output";
 export const PTY_EXIT_EVENT = "pty://exit";
+export const PTY_PORTS_EVENT = "pty://ports";
 export const CLOSE_BLOCKED_EVENT = "aemeth://close-blocked";
 
 export interface PtyOutputPayload {
   sessionId: string;
   /** Base64-encoded raw terminal bytes. */
   data: string;
+}
+
+export interface PtyPortsPayload {
+  sessionId: string;
+  /** TCP ports the session's process tree listens on. */
+  ports: number[];
 }
 
 /** Spec sent to the backend when launching a session. */
@@ -68,6 +75,10 @@ export function listenPtyOutput(handler: (payload: PtyOutputPayload) => void): P
 
 export function listenPtyExit(handler: (payload: SessionStatus) => void): Promise<UnlistenFn> {
   return listen<SessionStatus>(PTY_EXIT_EVENT, (e) => handler(e.payload));
+}
+
+export function listenPtyPorts(handler: (payload: PtyPortsPayload) => void): Promise<UnlistenFn> {
+  return listen<PtyPortsPayload>(PTY_PORTS_EVENT, (e) => handler(e.payload));
 }
 
 /* ------------------------------------------------------------------ */

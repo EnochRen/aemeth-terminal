@@ -45,10 +45,28 @@ export interface SessionStatus {
   state: SessionState;
   exitCode?: number;
   pid?: number;
+  /** TCP ports the session's process tree listens on (live-updated). */
+  ports?: number[];
   startedAt: number;
 }
 
 export type AppRuntimeState = "stopped" | "starting" | "running" | "exited";
+
+/** One system process — mirrors `ProcessInfo` in Rust. */
+export interface ProcessInfo {
+  pid: number;
+  ppid: number | null;
+  name: string;
+  /** Full command line, arguments joined by spaces. */
+  cmd: string;
+  exe: string | null;
+  /** Resident memory in bytes. */
+  memory: number;
+  cpu: number;
+  /** Start time, seconds since the epoch. */
+  startTime: number;
+  ports: number[];
+}
 
 /** Global, persisted preferences. */
 export interface AppSettings {
