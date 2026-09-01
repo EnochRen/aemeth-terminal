@@ -24,30 +24,30 @@ import {
 } from "@/lib/pty";
 import type { AppConfig, SessionStatus } from "@/types";
 
-/** Aemeth dark palette shared with the rest of the UI. */
+/** Geist-flavoured ANSI palette on a pure black canvas. */
 const XTERM_THEME = {
-  background: "#0b0e14",
-  foreground: "#d6dbe5",
-  cursor: "#9d8cff",
-  cursorAccent: "#0b0e14",
-  selectionBackground: "rgba(124, 108, 240, 0.35)",
-  selectionInactiveBackground: "rgba(124, 108, 240, 0.22)",
-  black: "#1c2230",
-  red: "#f26d6d",
-  green: "#3dd68c",
-  yellow: "#f5b84c",
-  blue: "#5aa7f0",
-  magenta: "#b78cf5",
-  cyan: "#43c6c0",
-  white: "#d6dbe5",
-  brightBlack: "#5a6478",
-  brightRed: "#ff8a80",
-  brightGreen: "#5ef0a8",
-  brightYellow: "#ffd06e",
-  brightBlue: "#7cbdf5",
-  brightMagenta: "#cda5f7",
-  brightCyan: "#63ded8",
-  brightWhite: "#f2f5fa",
+  background: "#000000",
+  foreground: "#ededed",
+  cursor: "#ededed",
+  cursorAccent: "#000000",
+  selectionBackground: "rgba(0, 112, 243, 0.35)",
+  selectionInactiveBackground: "rgba(255, 255, 255, 0.15)",
+  black: "#171717",
+  red: "#e5484d",
+  green: "#46a758",
+  yellow: "#ffb224",
+  blue: "#0072f5",
+  magenta: "#d6409f",
+  cyan: "#12a594",
+  white: "#ededed",
+  brightBlack: "#666666",
+  brightRed: "#ff6369",
+  brightGreen: "#46a758",
+  brightYellow: "#ffb224",
+  brightBlue: "#0072f5",
+  brightMagenta: "#e93d82",
+  brightCyan: "#12a594",
+  brightWhite: "#ffffff",
 };
 
 const FLUSH_INTERVAL_MS = 8;
@@ -71,7 +71,7 @@ export class SessionClient {
       cursorBlink: true,
       cursorStyle: "bar",
       fontFamily:
-        '"Geist Mono Variable", "Cascadia Mono", Consolas, "Courier New", monospace',
+        '"Geist Mono Variable", "Cascadia Mono", Consolas, "Noto Sans SC Variable", "Microsoft YaHei", monospace',
       fontSize: 13,
       lineHeight: 1.35,
       letterSpacing: 0,

@@ -1,13 +1,24 @@
-import { LayoutGrid, Plus, SquareTerminal } from "lucide-react";
+import { Check, Languages, LayoutGrid, Plus, SquareTerminal } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { LOCALES } from "@/i18n/locales";
+import { useT } from "@/i18n/use-t";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/use-app-store";
 
 /** Flat activity rail — black, hairline border, grey→white on active. */
 export function Sidebar() {
+  const t = useT();
   const view = useAppStore((s) => s.view);
   const setView = useAppStore((s) => s.setView);
   const openEditor = useAppStore((s) => s.openEditor);
+  const locale = useAppStore((s) => s.locale);
+  const setLocale = useAppStore((s) => s.setLocale);
   const running = useAppStore(
     (s) => Object.values(s.sessions).filter((x) => x.state === "running").length,
   );
@@ -20,17 +31,13 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-col items-center gap-1">
-        <RailButton
-          active={view === "apps"}
-          label="应用列表"
-          onClick={() => setView("apps")}
-        >
+        <RailButton active={view === "apps"} label={t.sidebar.apps} onClick={() => setView("apps")}>
           <LayoutGrid className="size-4" strokeWidth={1.75} />
         </RailButton>
 
         <RailButton
           active={view === "terminals"}
-          label="终端"
+          label={t.sidebar.terminals}
           onClick={() => setView("terminals")}
         >
           <span className="relative">
@@ -42,8 +49,39 @@ export function Sidebar() {
         </RailButton>
       </nav>
 
-      <div className="mt-auto">
-        <RailButton label="新建应用" onClick={() => openEditor(null)}>
+      <div className="mt-auto flex flex-col items-center gap-1">
+        {/* Language */}
+        <DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex size-9 items-center justify-center rounded-md text-[#a1a1a1] transition-colors duration-100 hover:bg-accent hover:text-foreground"
+                >
+                  <Languages className="size-4" strokeWidth={1.75} />
+                </button>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="right" className="font-mono text-xs">
+              {t.sidebar.language}
+            </TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent side="right" align="end" className="w-32">
+            {LOCALES.map((l) => (
+              <DropdownMenuItem
+                key={l.value}
+                onClick={() => void setLocale(l.value)}
+                className="justify-between"
+              >
+                {l.label}
+                {locale === l.value && <Check className="size-3.5 text-[#666]" />}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <RailButton label={t.sidebar.newApp} onClick={() => openEditor(null)}>
           <Plus className="size-4" strokeWidth={1.75} />
         </RailButton>
       </div>

@@ -11,12 +11,15 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { StatusDot } from "@/components/shared/status-pill";
 import { TerminalPane } from "@/components/terminals/terminal-pane";
+import { fmt } from "@/i18n/locales";
+import { useT } from "@/i18n/use-t";
 import { cn } from "@/lib/utils";
 import { sessionRegistry } from "@/lib/session-registry";
 import { useAppStore } from "@/store/use-app-store";
 import type { AppConfig } from "@/types";
 
 export function TerminalsView() {
+  const t = useT();
   const openTabs = useAppStore((s) => s.openTabs);
   const activeAppId = useAppStore((s) => s.activeAppId);
   const apps = useAppStore((s) => s.apps);
@@ -71,15 +74,15 @@ export function TerminalsView() {
                 </DropdownMenuTrigger>
               </TooltipTrigger>
               <TooltipContent side="bottom" className="font-mono text-xs">
-                新建终端
+                {t.terminals.newTab}
               </TooltipContent>
             </Tooltip>
             <DropdownMenuContent align="end" className="w-56">
               {launchable.length === 0 ? (
-                <DropdownMenuItem disabled>所有应用都已打开</DropdownMenuItem>
+                <DropdownMenuItem disabled>{t.terminals.allOpen}</DropdownMenuItem>
               ) : (
                 <>
-                  <DropdownMenuLabel className="label-micro font-mono">launch</DropdownMenuLabel>
+                  <DropdownMenuLabel className="label-micro font-mono">{t.terminals.launch}</DropdownMenuLabel>
                   {launchable.map((a) => (
                     <DropdownMenuItem
                       key={a.id}
@@ -91,7 +94,7 @@ export function TerminalsView() {
                       />
                       <span className="truncate text-xs">{a.name}</span>
                       <span className="ml-auto font-mono text-[10px] text-[#666]">
-                        {sessions[a.id]?.state === "running" ? "focus" : "start"}
+                        {sessions[a.id]?.state === "running" ? t.terminals.focus : t.terminals.start}
                       </span>
                     </DropdownMenuItem>
                   ))}
@@ -168,6 +171,7 @@ function Tab({
 }
 
 function EmptyTerminal({ apps }: { apps: AppConfig[] }) {
+  const t = useT();
   const startApp = useAppStore((s) => s.startApp);
   const setView = useAppStore((s) => s.setView);
 
@@ -178,10 +182,8 @@ function EmptyTerminal({ apps }: { apps: AppConfig[] }) {
 ─────────────────`}
       </pre>
       <div className="text-center">
-        <p className="label-micro">no open terminals</p>
-        <p className="mt-1.5 text-[12.5px] text-[#a1a1a1]">
-          从下方启动一个服务，或前往应用列表
-        </p>
+        <p className="label-micro">{t.terminals.emptyLabel}</p>
+        <p className="mt-1.5 text-[12.5px] text-[#a1a1a1]">{t.terminals.emptyHint}</p>
       </div>
 
       {apps.length > 0 && (
@@ -205,11 +207,11 @@ function EmptyTerminal({ apps }: { apps: AppConfig[] }) {
         onClick={() => setView("apps")}
         className="font-mono text-[11px] text-[#525252] underline decoration-[#333] underline-offset-4 transition-colors hover:text-foreground"
       >
-        前往应用列表 →
+        {t.terminals.goApps}
       </button>
       {sessionRegistry.runningCount > 0 && (
         <span className="font-mono text-[10.5px] text-[#333]">
-          {sessionRegistry.runningCount} session(s) running in background
+          {fmt(t.terminals.bgSessions, { n: sessionRegistry.runningCount })}
         </span>
       )}
     </div>

@@ -8,9 +8,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { fmt } from "@/i18n/locales";
+import { useT } from "@/i18n/use-t";
 import { useAppStore } from "@/store/use-app-store";
 
 export function DeleteDialog() {
+  const t = useT();
   const target = useAppStore((s) => s.deleteTarget);
   const requestDelete = useAppStore((s) => s.requestDelete);
   const deleteApp = useAppStore((s) => s.deleteApp);
@@ -19,14 +22,14 @@ export function DeleteDialog() {
     <AlertDialog open={target !== null} onOpenChange={(o) => !o && requestDelete(null)}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>删除「{target?.name}」？</AlertDialogTitle>
-          <AlertDialogDescription>
-            该应用的配置将被永久删除；若其终端正在运行，会一并停止。此操作无法撤销。
-          </AlertDialogDescription>
+          <AlertDialogTitle>{fmt(t.delete.title, { name: target?.name ?? "" })}</AlertDialogTitle>
+          <AlertDialogDescription>{t.delete.desc}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>取消</AlertDialogCancel>
-          <AlertDialogAction onClick={() => void deleteApp()}>删除</AlertDialogAction>
+          <AlertDialogCancel>{t.delete.cancel}</AlertDialogCancel>
+          <AlertDialogAction onClick={() => void deleteApp()}>
+            {t.delete.confirm}
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

@@ -1,3 +1,4 @@
+import { useT } from "@/i18n/use-t";
 import { cn } from "@/lib/utils";
 import type { SessionStatus } from "@/types";
 
@@ -8,11 +9,12 @@ interface StatusPillProps {
 
 /** Monospace status readout — color carried only by the dot. */
 export function StatusPill({ session, className }: StatusPillProps) {
+  const t = useT();
   if (!session) {
     return (
       <span className={cn("inline-flex items-center gap-2 font-mono text-xs text-state-idle", className)}>
         <span className="size-1.5 rounded-full bg-state-idle" />
-        idle
+        {t.status.idle}
       </span>
     );
   }
@@ -20,7 +22,7 @@ export function StatusPill({ session, className }: StatusPillProps) {
     return (
       <span className={cn("inline-flex items-center gap-2 font-mono text-xs text-muted-foreground", className)}>
         <span className="size-1.5 rounded-full bg-state-running" />
-        running
+        {t.status.running}
       </span>
     );
   }
@@ -28,7 +30,8 @@ export function StatusPill({ session, className }: StatusPillProps) {
   return (
     <span className={cn("inline-flex items-center gap-2 font-mono text-xs text-muted-foreground", className)}>
       <span className={cn("size-1.5 rounded-full", failed ? "bg-state-error" : "bg-state-idle")} />
-      exited{session.exitCode !== undefined ? ` · ${session.exitCode}` : ""}
+      {t.status.exited}
+      {session.exitCode !== undefined ? ` · ${session.exitCode}` : ""}
     </span>
   );
 }

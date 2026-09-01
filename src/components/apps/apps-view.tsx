@@ -4,9 +4,12 @@ import { Plus, Search } from "lucide-react";
 import { AppCard } from "@/components/apps/app-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { fmt } from "@/i18n/locales";
+import { useT } from "@/i18n/use-t";
 import { useAppStore } from "@/store/use-app-store";
 
 export function AppsView() {
+  const t = useT();
   const apps = useAppStore((s) => s.apps);
   const sessions = useAppStore((s) => s.sessions);
   const searchQuery = useAppStore((s) => s.searchQuery);
@@ -30,9 +33,9 @@ export function AppsView() {
     <div className="flex h-full flex-col">
       {/* Header — vercel-style toolbar */}
       <header className="flex h-[52px] shrink-0 items-center gap-3 border-b border-border px-5">
-        <h1 className="text-[13.5px] font-semibold tracking-tight">Applications</h1>
+        <h1 className="text-[13.5px] font-semibold tracking-tight">{t.apps.title}</h1>
         <span className="font-mono text-[11px] text-[#666]">
-          {apps.length} app{apps.length === 1 ? "" : "s"} · {running} running
+          {fmt(t.apps.count, { apps: apps.length, running })}
         </span>
 
         <div className="relative ml-auto w-60">
@@ -40,12 +43,12 @@ export function AppsView() {
           <Input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="搜索…"
+            placeholder={t.apps.search}
             className="h-7 rounded-md bg-transparent pl-8 font-mono text-xs"
           />
         </div>
         <Button size="sm" className="h-7 gap-1.5 px-3 text-xs" onClick={() => openEditor(null)}>
-          <Plus className="size-3.5" /> New
+          <Plus className="size-3.5" /> {t.apps.new}
         </Button>
       </header>
 
@@ -55,7 +58,7 @@ export function AppsView() {
           <EmptyState onCreate={() => openEditor(null)} />
         ) : filtered.length === 0 ? (
           <div className="flex h-full items-center justify-center font-mono text-xs text-[#666]">
-            no match for “{searchQuery}”
+            {fmt(t.apps.noMatch, { q: searchQuery })}
           </div>
         ) : (
           <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(340px,1fr))]">
@@ -70,22 +73,20 @@ export function AppsView() {
 }
 
 function EmptyState({ onCreate }: { onCreate: () => void }) {
+  const t = useT();
   return (
     <div className="flex h-full flex-col items-center justify-center gap-5 text-center">
       <div className="flex size-9 items-center justify-center rounded-md border border-[#333] font-mono text-sm text-foreground">
         Æ
       </div>
       <div className="space-y-1.5">
-        <p className="label-micro">no applications</p>
+        <p className="label-micro">{t.apps.emptyLabel}</p>
         <p className="mx-auto max-w-sm text-[12.5px] leading-relaxed text-[#a1a1a1]">
-          为每个服务建立一张卡片：指定 Shell、工作目录与预设指令，
-          <br />
-          例如 <span className="font-mono text-[11.5px] text-foreground">cd qa-egg</span>{" "}
-          → <span className="font-mono text-[11.5px] text-foreground">yarn dev</span>，一键启动。
+          {t.apps.emptyDesc}
         </p>
       </div>
       <Button size="sm" className="h-7 gap-1.5 px-3 text-xs" onClick={onCreate}>
-        <Plus className="size-3.5" /> 创建第一个应用
+        <Plus className="size-3.5" /> {t.apps.createFirst}
       </Button>
     </div>
   );

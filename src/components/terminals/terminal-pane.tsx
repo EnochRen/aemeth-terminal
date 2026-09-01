@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 
+import { fmt } from "@/i18n/locales";
+import { useT } from "@/i18n/use-t";
 import { sessionRegistry } from "@/lib/session-registry";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/use-app-store";
@@ -15,6 +17,7 @@ interface TerminalPaneProps {
  * fit calculations — keep working.
  */
 export function TerminalPane({ appId, active }: TerminalPaneProps) {
+  const t = useT();
   const containerRef = useRef<HTMLDivElement>(null);
   const client = sessionRegistry.getByApp(appId);
   const session = useAppStore((s) => s.sessions[appId]);
@@ -70,7 +73,8 @@ export function TerminalPane({ appId, active }: TerminalPaneProps) {
         <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center">
           <div className="pointer-events-auto flex items-center gap-3 rounded-md border border-border bg-[#0a0a0a] px-3 py-1.5">
             <span className="font-mono text-[11px] text-[#a1a1a1]">
-              exited{session.exitCode !== undefined ? ` · code ${session.exitCode}` : ""}
+              {t.pane.exited}
+              {session.exitCode !== undefined ? ` · ${fmt(t.pane.code, { code: session.exitCode })}` : ""}
             </span>
             <span className="h-3 w-px bg-border" />
             <button
@@ -78,14 +82,14 @@ export function TerminalPane({ appId, active }: TerminalPaneProps) {
               onClick={() => void restartApp(appId)}
               className="font-mono text-[11px] text-foreground underline decoration-[#333] underline-offset-4 hover:decoration-foreground"
             >
-              restart
+              {t.pane.restart}
             </button>
             <button
               type="button"
               onClick={() => closeTab(appId)}
               className="font-mono text-[11px] text-[#666] underline decoration-[#333] underline-offset-4 hover:text-foreground"
             >
-              close
+              {t.pane.close}
             </button>
           </div>
         </div>

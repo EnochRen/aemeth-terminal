@@ -24,12 +24,14 @@ import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n/use-t";
 import { useAppStore } from "@/store/use-app-store";
 import { APP_COLORS, type AppConfig, type PresetCommand, type ShellKind } from "@/types";
 
 const DEFAULT_COMMAND_DELAY = 400;
 
 export function AppDialog() {
+  const t = useT();
   const open = useAppStore((s) => s.editorOpen);
   const editing = useAppStore((s) => s.editorApp);
   const closeEditor = useAppStore((s) => s.closeEditor);
@@ -76,7 +78,7 @@ export function AppDialog() {
     const picked = await openDialog({
       directory: true,
       multiple: false,
-      title: "选择工作目录",
+      title: t.dialog.pickDir,
       defaultPath: cwd || undefined,
     });
     if (typeof picked === "string") setCwd(picked);
@@ -121,22 +123,20 @@ export function AppDialog() {
     <Dialog open={open} onOpenChange={(o) => !o && closeEditor()}>
       <DialogContent className="max-w-xl gap-5">
         <DialogHeader>
-          <DialogTitle>{editing ? "编辑应用" : "新建应用"}</DialogTitle>
-          <DialogDescription>
-            为服务指定 Shell、工作目录与启动指令，之后即可一键启动。
-          </DialogDescription>
+          <DialogTitle>{editing ? t.dialog.titleEdit : t.dialog.titleNew}</DialogTitle>
+          <DialogDescription>{t.dialog.desc}</DialogDescription>
         </DialogHeader>
 
         <div className="grid max-h-[62vh] gap-5 overflow-y-auto pr-1">
           {/* Name + color */}
           <div className="grid gap-2">
-            <Label htmlFor="app-name">应用名称</Label>
+            <Label htmlFor="app-name">{t.dialog.name}</Label>
             <div className="flex items-center gap-3">
               <Input
                 id="app-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="例如：QA Egg 服务"
+                placeholder={t.dialog.namePlaceholder}
                 className="flex-1"
                 autoFocus
               />
@@ -151,7 +151,7 @@ export function AppDialog() {
                       color === c && "ring-2 ring-foreground/70 ring-offset-2 ring-offset-popover",
                     )}
                     style={{ backgroundColor: c }}
-                    aria-label={`颜色 ${c}`}
+                    aria-label={`${t.dialog.color} ${c}`}
                   />
                 ))}
               </div>
@@ -161,7 +161,7 @@ export function AppDialog() {
           {/* Shell + cwd */}
           <div className="grid grid-cols-2 gap-4">
             <div className="grid gap-2">
-              <Label>Shell</Label>
+              <Label>{t.dialog.shell}</Label>
               <Select value={shell} onValueChange={(v) => setShell(v as ShellKind)}>
                 <SelectTrigger className="w-full">
                   <SelectValue />
@@ -182,13 +182,13 @@ export function AppDialog() {
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="app-cwd">工作目录（可选）</Label>
+              <Label htmlFor="app-cwd">{t.dialog.cwd}</Label>
               <div className="flex gap-1.5">
                 <Input
                   id="app-cwd"
                   value={cwd}
                   onChange={(e) => setCwd(e.target.value)}
-                  placeholder="E:\ProjectWork\…"
+                  placeholder={t.dialog.cwdPlaceholder}
                   className="flex-1 font-mono text-xs"
                 />
                 <Button variant="secondary" size="icon" onClick={() => void pickDirectory()}>
@@ -203,21 +203,21 @@ export function AppDialog() {
           {/* Preset commands */}
           <div className="grid gap-2">
             <div className="flex items-center justify-between">
-              <Label>预设指令</Label>
+              <Label>{t.dialog.commands}</Label>
               <span className="text-[11px] text-muted-foreground">
-                按顺序输入到 Shell，每条可单独设置发送间隔
+                {t.dialog.commandsHint}
               </span>
             </div>
             <div className="space-y-2">
               {commands.map((c, i) => (
                 <div key={i} className="flex items-center gap-2">
-                  <span className="w-5 text-right font-mono text-xs text-[#7c6cf0]">
+                  <span className="w-5 text-right font-mono text-xs text-[#525252]">
                     {i + 1}.
                   </span>
                   <Input
                     value={c.command}
                     onChange={(e) => updateCommand(i, { command: e.target.value })}
-                    placeholder={i === 0 ? "cd E:\\ProjectWork\\qa\\torappu-qa\\qa-egg" : "yarn dev"}
+                    placeholder={i === 0 ? t.dialog.cmdPlaceholder1 : t.dialog.cmdPlaceholder2}
                     className="flex-1 font-mono text-xs"
                   />
                   <div className="relative w-28">
@@ -251,7 +251,7 @@ export function AppDialog() {
                   setCommands((cs) => [...cs, { command: "", delayMs: DEFAULT_COMMAND_DELAY }])
                 }
               >
-                <Plus className="size-3.5" /> 添加指令
+                <Plus className="size-3.5" /> {t.dialog.addCommand}
               </Button>
             </div>
           </div>
@@ -259,7 +259,7 @@ export function AppDialog() {
           {/* Startup delay */}
           <div className="grid gap-2.5">
             <div className="flex items-center justify-between">
-              <Label>等待 Shell 就绪</Label>
+              <Label>{t.dialog.delay}</Label>
               <span className="font-mono text-xs text-muted-foreground">{startupDelayMs} ms</span>
             </div>
             <Slider
@@ -270,16 +270,16 @@ export function AppDialog() {
               onValueChange={(v) => setStartupDelayMs(v[0])}
             />
             <p className="text-[11px] leading-relaxed text-muted-foreground">
-              启动后等待该时长再发送第一条预设指令。网络磁盘较慢时可适当调大。
+              {t.dialog.delayHint}
             </p>
           </div>
 
           {/* Auto start */}
           <div className="flex items-center justify-between rounded-lg border border-border/60 px-3.5 py-3">
             <div>
-              <Label className="text-sm">随应用启动</Label>
+              <Label className="text-sm">{t.dialog.autoStart}</Label>
               <p className="mt-0.5 text-[11px] text-muted-foreground">
-                打开 Aemeth Terminal 时自动启动该服务
+                {t.dialog.autoStartHint}
               </p>
             </div>
             <Switch checked={autoStart} onCheckedChange={setAutoStart} />
@@ -288,10 +288,10 @@ export function AppDialog() {
 
         <DialogFooter>
           <Button variant="ghost" onClick={closeEditor}>
-            取消
+            {t.dialog.cancel}
           </Button>
           <Button disabled={!valid} onClick={() => void handleSave()}>
-            {editing ? "保存修改" : "创建应用"}
+            {editing ? t.dialog.save : t.dialog.create}
           </Button>
         </DialogFooter>
       </DialogContent>

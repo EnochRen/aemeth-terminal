@@ -18,6 +18,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ShellBadge } from "@/components/shared/shell-badge";
 import { StatusPill } from "@/components/shared/status-pill";
+import { fmt } from "@/i18n/locales";
+import { useT } from "@/i18n/use-t";
 import { useAppStore } from "@/store/use-app-store";
 import type { AppConfig } from "@/types";
 
@@ -26,6 +28,7 @@ import type { AppConfig } from "@/types";
  * identity dot and the status dot. Actions surface on hover.
  */
 export function AppCard({ app }: { app: AppConfig }) {
+  const t = useT();
   const session = useAppStore((s) => s.sessions[app.id]);
   const startApp = useAppStore((s) => s.startApp);
   const stopApp = useAppStore((s) => s.stopApp);
@@ -64,19 +67,19 @@ export function AppCard({ app }: { app: AppConfig }) {
             {running && (
               <>
                 <DropdownMenuItem onClick={() => void stopApp(app.id)}>
-                  <Square className="size-3.5" /> 停止
+                  <Square className="size-3.5" /> {t.card.stop}
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => void restartApp(app.id)}>
-                  <RotateCcw className="size-3.5" /> 重启
+                  <RotateCcw className="size-3.5" /> {t.card.restart}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
               </>
             )}
             <DropdownMenuItem onClick={() => openEditor(app)}>
-              <Pencil className="size-3.5" /> 编辑
+              <Pencil className="size-3.5" /> {t.card.edit}
             </DropdownMenuItem>
             <DropdownMenuItem variant="destructive" onClick={() => requestDelete(app)}>
-              <Trash2 className="size-3.5" /> 删除
+              <Trash2 className="size-3.5" /> {t.card.delete}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -86,7 +89,7 @@ export function AppCard({ app }: { app: AppConfig }) {
       <div className="flex items-center justify-between px-4 pb-3 pt-1.5">
         <StatusPill session={session} />
         {session?.pid !== undefined && session.state === "running" && (
-          <span className="font-mono text-[10.5px] text-[#666]">pid {session.pid}</span>
+          <span className="font-mono text-[10.5px] text-[#666]">{fmt(t.card.pid, { pid: session.pid })}</span>
         )}
       </div>
 
@@ -107,11 +110,11 @@ export function AppCard({ app }: { app: AppConfig }) {
             </div>
           ))
         ) : (
-          <div className="font-mono text-[11.5px] text-[#525252]">interactive shell</div>
+          <div className="font-mono text-[11.5px] text-[#525252]">{t.card.interactive}</div>
         )}
         {app.commands.length > 2 && (
           <div className="pt-0.5 font-mono text-[10.5px] text-[#525252]">
-            +{app.commands.length - 2} more
+            {fmt(t.card.more, { n: app.commands.length - 2 })}
           </div>
         )}
       </div>
@@ -121,7 +124,7 @@ export function AppCard({ app }: { app: AppConfig }) {
         {running ? (
           <>
             <Button size="sm" className="h-7 gap-1.5 px-2.5 text-xs" onClick={() => void openTerminal(app.id)}>
-              <SquareTerminal className="size-3.5" /> 打开终端
+              <SquareTerminal className="size-3.5" /> {t.card.openTerminal}
             </Button>
             <Button
               size="sm"
@@ -129,13 +132,13 @@ export function AppCard({ app }: { app: AppConfig }) {
               className="h-7 px-2.5 text-xs text-[#a1a1a1]"
               onClick={() => void stopApp(app.id)}
             >
-              停止
+              {t.card.stop}
             </Button>
           </>
         ) : (
           <>
             <Button size="sm" className="h-7 gap-1.5 px-2.5 text-xs" onClick={() => void startApp(app.id)}>
-              <Play className="size-3" /> {exited ? "重新启动" : "启动"}
+              <Play className="size-3" /> {exited ? t.card.restart : t.card.start}
             </Button>
             {exited && (
               <Button
@@ -144,13 +147,13 @@ export function AppCard({ app }: { app: AppConfig }) {
                 className="h-7 gap-1.5 px-2.5 text-xs text-[#a1a1a1]"
                 onClick={() => void openTerminal(app.id)}
               >
-                查看输出
+                {t.card.viewOutput}
               </Button>
             )}
           </>
         )}
         {app.autoStart && (
-          <span className="ml-auto font-mono text-[10.5px] text-[#525252]">auto</span>
+          <span className="ml-auto font-mono text-[10.5px] text-[#525252]">{t.card.auto}</span>
         )}
       </div>
     </div>

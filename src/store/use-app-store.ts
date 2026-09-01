@@ -6,6 +6,7 @@ import { create } from "zustand";
 import { Store } from "@tauri-apps/plugin-store";
 import { toast } from "sonner";
 
+import { dictionaries, detectLocale, fmt, type Locale } from "@/i18n/locales";
 import { sessionRegistry } from "@/lib/session-registry";
 import { ptyList, shellsDetect } from "@/lib/pty";
 import type { AppConfig, SessionStatus, ShellInfo, ShellKind } from "@/types";
@@ -39,8 +40,10 @@ interface AppState {
   editorApp: AppConfig | null;
   editorOpen: boolean;
   deleteTarget: AppConfig | null;
+  locale: Locale;
 
   hydrate: () => Promise<void>;
+  setLocale: (locale: Locale) => Promise<void>;
   setView: (view: View) => void;
   setSearchQuery: (q: string) => void;
 
@@ -74,6 +77,15 @@ export const useAppStore = create<AppState>()((set, get) => ({
   editorApp: null,
   editorOpen: false,
   deleteTarget: null,
+  locale: detectLocale(),
+
+  setLocale: async (locale) => {
+    set({ locale });
+    document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
+    const store = await getStore();
+    await store.set("locale", locale);
+    await store.save();
+  },
 
   hydrate: async () => {
     if (hydrating || get().hydrated) return;
@@ -85,11 +97,14 @@ export const useAppStore = create<AppState>()((set, get) => ({
     });
 
     const store = await getStore();
+    const savedLocale = await store.get<Locale>("locale");
+    const locale = savedLocale ?? get().locale;
+    document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
     const apps = ((await store.get<AppConfig[]>(APPS_KEY)) ?? []).sort(
       (a, b) => a.sortOrder - b.sortOrder || a.createdAt - b.createdAt,
     );
     const shells = await shellsDetect().catch(() => [] as ShellInfo[]);
-    set({ apps, shells, hydrated: true });
+    set({ apps, shells, hydrated: true, locale });
 
     // Reconcile sessions that survived a frontend reload.
     try {
@@ -128,7 +143,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
     set({ apps, editorOpen: false, editorApp: null });
     await store.set(APPS_KEY, apps);
     await store.save();
-    toast.success(exists ? `已保存「${app.name}」` : `已创建「${app.name}」`);
+    const t = dictionaries[get().locale].toasts;
+    toast.success(fmt(exists ? t.saved : t.created, { name: app.name }));
   },
 
   requestDelete: (app) => set({ deleteTarget: app }),
@@ -150,7 +166,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
     const store = await getStore();
     await store.set(APPS_KEY, apps);
     await store.save();
-    toast.success(`已删除「${target.name}」`);
+    const t = dictionaries[get().locale].toasts;
+    toast.success(fmt(t.deleted, { name: target.name }));
   },
 
   startApp: async (appId, focus = true) => {
@@ -174,7 +191,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
       }
     } catch (err) {
       if (err instanceof Error && err.message === "already starting") return;
-      toast.error(`启动「${app.name}」失败`, {
+      toast.error(fmt(dictionaries[get().locale].toasts.startFailed, { name: app.name }), {
         description: err instanceof Error ? err.message : String(err),
       });
     }
@@ -196,7 +213,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
         view: "terminals",
       }));
     } catch (err) {
-      toast.error(`重启「${app.name}」失败`, {
+      toast.error(fmt(dictionaries[get().locale].toasts.restartFailed, { name: app.name }), {
         description: err instanceof Error ? err.message : String(err),
       });
     }

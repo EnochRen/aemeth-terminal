@@ -8,6 +8,7 @@ import { TerminalsView } from "@/components/terminals/terminals-view";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useShortcuts } from "@/hooks/use-shortcuts";
+import { useT } from "@/i18n/use-t";
 import { useAppStore } from "@/store/use-app-store";
 
 export default function App() {
@@ -43,12 +44,13 @@ export default function App() {
 }
 
 function BootScreen() {
+  const t = useT();
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4">
       <div className="flex size-8 items-center justify-center rounded-md border border-[#333] font-mono text-sm text-foreground">
         Æ
       </div>
-      <p className="label-micro">loading</p>
+      <p className="label-micro">{t.app.loading}</p>
     </div>
   );
 }
