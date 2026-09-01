@@ -50,13 +50,14 @@ export interface SessionStatus {
 
 export type AppRuntimeState = "stopped" | "starting" | "running" | "exited";
 
+/** Muted identity dots — borrowed from the Geist scale. */
 export const APP_COLORS = [
-  "#7c6cf0",
-  "#5aa7f0",
-  "#43c6c0",
-  "#3dd68c",
-  "#f5b84c",
-  "#f26d6d",
-  "#f27fb2",
-  "#8a93a6",
+  "#ededed",
+  "#0072f5",
+  "#46a758",
+  "#ffb224",
+  "#e5484d",
+  "#8e4ec6",
+  "#12a594",
+  "#d6409f",
 ] as const;

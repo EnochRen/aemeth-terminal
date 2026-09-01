@@ -15,6 +15,7 @@
 - **随应用启动** — 勾选后打开 Aemeth 即自动拉起对应服务。
 - **快捷键** — `Ctrl+Tab` / `Ctrl+Shift+Tab` 切换标签，`Ctrl+1…9` 跳转，`Ctrl+W` 关闭。
 - **退出即清理** — 关闭窗口时自动终止所有派生 Shell 进程。
+- **Geist / Vercel 风格视觉** — 纯黑画布、发丝级边框、Geist Sans + Geist Mono，颜色只用于状态语义。
 
 ## 🖥️ 两个界面
 

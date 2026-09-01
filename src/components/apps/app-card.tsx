@@ -1,12 +1,10 @@
 import {
-  FolderOpen,
   MoreHorizontal,
   Pencil,
   Play,
   RotateCcw,
   Square,
   SquareTerminal,
-  Terminal,
   Trash2,
 } from "lucide-react";
 
@@ -20,10 +18,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ShellBadge } from "@/components/shared/shell-badge";
 import { StatusPill } from "@/components/shared/status-pill";
-import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/use-app-store";
 import type { AppConfig } from "@/types";
 
+/**
+ * Deployment-row style card: hairline border, mono data, color only in the
+ * identity dot and the status dot. Actions surface on hover.
+ */
 export function AppCard({ app }: { app: AppConfig }) {
   const session = useAppStore((s) => s.sessions[app.id]);
   const startApp = useAppStore((s) => s.startApp);
@@ -37,108 +38,119 @@ export function AppCard({ app }: { app: AppConfig }) {
   const exited = session?.state === "exited";
 
   return (
-    <div
-      className={cn(
-        "group relative flex flex-col gap-3 rounded-xl border border-border/70 bg-card p-4 transition-all",
-        "hover:border-border hover:shadow-[0_4px_24px_rgba(0,0,0,0.35)]",
-        running && "border-[#3dd68c]/20",
-      )}
-    >
-      {/* Header */}
-      <div className="flex items-start gap-3">
-        <div
-          className="flex size-10 shrink-0 items-center justify-center rounded-lg"
-          style={{ backgroundColor: `${app.color}1f`, color: app.color }}
-        >
-          <Terminal className="size-5" strokeWidth={2.2} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h3 className="truncate text-sm font-semibold">{app.name}</h3>
-            <ShellBadge kind={app.shell} />
-          </div>
-          <StatusPill session={session} className="mt-1" />
-        </div>
+    <div className="group flex flex-col rounded-lg border border-border bg-card transition-colors duration-100 hover:border-[#3f3f3f]">
+      {/* Row 1 — identity */}
+      <div className="flex items-center gap-2.5 px-4 pt-3.5">
+        <span
+          className="size-2 shrink-0 rounded-full"
+          style={{ backgroundColor: app.color }}
+          aria-hidden
+        />
+        <h3 className="min-w-0 flex-1 truncate text-[13.5px] font-semibold tracking-tight">
+          {app.name}
+        </h3>
+        <ShellBadge kind={app.shell} />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="size-8 text-muted-foreground">
-              <MoreHorizontal className="size-4" />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6 text-[#666] opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
+            >
+              <MoreHorizontal className="size-3.5" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-40">
             {running && (
               <>
                 <DropdownMenuItem onClick={() => void stopApp(app.id)}>
-                  <Square className="size-4" /> 停止
+                  <Square className="size-3.5" /> 停止
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => void restartApp(app.id)}>
-                  <RotateCcw className="size-4" /> 重启
+                  <RotateCcw className="size-3.5" /> 重启
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
               </>
             )}
             <DropdownMenuItem onClick={() => openEditor(app)}>
-              <Pencil className="size-4" /> 编辑
+              <Pencil className="size-3.5" /> 编辑
             </DropdownMenuItem>
-            <DropdownMenuItem
-              variant="destructive"
-              onClick={() => requestDelete(app)}
-            >
-              <Trash2 className="size-4" /> 删除
+            <DropdownMenuItem variant="destructive" onClick={() => requestDelete(app)}>
+              <Trash2 className="size-3.5" /> 删除
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
 
-      {/* Working dir + commands */}
-      <div className="space-y-2">
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <FolderOpen className="size-3.5 shrink-0" />
-          <span className="truncate font-mono" title={app.cwd ?? undefined}>
-            {app.cwd || "默认目录"}
-          </span>
+      {/* Row 2 — status line */}
+      <div className="flex items-center justify-between px-4 pb-3 pt-1.5">
+        <StatusPill session={session} />
+        {session?.pid !== undefined && session.state === "running" && (
+          <span className="font-mono text-[10.5px] text-[#666]">pid {session.pid}</span>
+        )}
+      </div>
+
+      {/* Row 3 — data */}
+      <div className="border-t border-border px-4 py-2.5">
+        <div className="truncate font-mono text-[11.5px] leading-relaxed text-[#a1a1a1]">
+          <span className="text-[#525252]">cd </span>
+          {app.cwd ?? "~"}
         </div>
         {app.commands.length > 0 ? (
-          <div className="rounded-lg border border-border/60 bg-background/60 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-foreground/80">
-            {app.commands.slice(0, 2).map((c, i) => (
-              <div key={i} className="truncate">
-                <span className="select-none text-[#7c6cf0]">$ </span>
-                {c.command}
-              </div>
-            ))}
-            {app.commands.length > 2 && (
-              <div className="text-muted-foreground">… 共 {app.commands.length} 条指令</div>
-            )}
-          </div>
+          app.commands.slice(0, 2).map((c, i) => (
+            <div
+              key={i}
+              className="truncate font-mono text-[11.5px] leading-relaxed text-[#a1a1a1]"
+            >
+              <span className="text-[#525252]">$ </span>
+              {c.command}
+            </div>
+          ))
         ) : (
-          <div className="rounded-lg border border-dashed border-border/60 px-2.5 py-2 text-center text-[11px] text-muted-foreground">
-            未配置预设指令 · 打开交互式 Shell
+          <div className="font-mono text-[11.5px] text-[#525252]">interactive shell</div>
+        )}
+        {app.commands.length > 2 && (
+          <div className="pt-0.5 font-mono text-[10.5px] text-[#525252]">
+            +{app.commands.length - 2} more
           </div>
         )}
       </div>
 
-      {/* Actions */}
-      <div className="mt-auto flex items-center gap-2 pt-1">
+      {/* Row 4 — actions */}
+      <div className="flex items-center gap-2 border-t border-border px-4 py-2.5">
         {running ? (
           <>
-            <Button size="sm" className="flex-1" onClick={() => void openTerminal(app.id)}>
-              <SquareTerminal className="size-4" /> 打开终端
+            <Button size="sm" className="h-7 gap-1.5 px-2.5 text-xs" onClick={() => void openTerminal(app.id)}>
+              <SquareTerminal className="size-3.5" /> 打开终端
             </Button>
-            <Button size="sm" variant="secondary" onClick={() => void stopApp(app.id)}>
-              <Square className="size-3.5" /> 停止
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2.5 text-xs text-[#a1a1a1]"
+              onClick={() => void stopApp(app.id)}
+            >
+              停止
             </Button>
           </>
         ) : (
           <>
-            <Button size="sm" className="flex-1" onClick={() => void startApp(app.id)}>
-              <Play className="size-4" /> {exited ? "重新启动" : "启动"}
+            <Button size="sm" className="h-7 gap-1.5 px-2.5 text-xs" onClick={() => void startApp(app.id)}>
+              <Play className="size-3" /> {exited ? "重新启动" : "启动"}
             </Button>
             {exited && (
-              <Button size="sm" variant="secondary" onClick={() => void openTerminal(app.id)}>
-                <SquareTerminal className="size-4" /> 终端
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 gap-1.5 px-2.5 text-xs text-[#a1a1a1]"
+                onClick={() => void openTerminal(app.id)}
+              >
+                查看输出
               </Button>
             )}
           </>
+        )}
+        {app.autoStart && (
+          <span className="ml-auto font-mono text-[10.5px] text-[#525252]">auto</span>
         )}
       </div>
     </div>

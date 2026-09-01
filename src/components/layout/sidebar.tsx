@@ -1,9 +1,9 @@
-import { LayoutGrid, SquareTerminal, Plus } from "lucide-react";
+import { LayoutGrid, Plus, SquareTerminal } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/use-app-store";
 
-/** VS Code-style activity rail. */
+/** Flat activity rail — black, hairline border, grey→white on active. */
 export function Sidebar() {
   const view = useAppStore((s) => s.view);
   const setView = useAppStore((s) => s.setView);
@@ -13,19 +13,19 @@ export function Sidebar() {
   );
 
   return (
-    <aside className="flex w-[60px] shrink-0 flex-col items-center border-r border-border/60 bg-sidebar py-3">
-      {/* Brand */}
-      <div className="mb-4 flex size-9 items-center justify-center rounded-lg bg-gradient-to-br from-[#7c6cf0] to-[#4f46b8] font-bold text-white shadow-[0_0_18px_rgba(124,108,240,0.35)]">
+    <aside className="flex w-14 shrink-0 flex-col items-center border-r border-border bg-sidebar py-3">
+      {/* Brand mark — bordered square, mono glyph */}
+      <div className="mb-5 flex size-7 select-none items-center justify-center rounded-md border border-[#333] font-mono text-[13px] font-medium text-foreground">
         Æ
       </div>
 
-      <nav className="flex flex-col items-center gap-1.5">
+      <nav className="flex flex-col items-center gap-1">
         <RailButton
           active={view === "apps"}
           label="应用列表"
           onClick={() => setView("apps")}
         >
-          <LayoutGrid className="size-[19px]" />
+          <LayoutGrid className="size-4" strokeWidth={1.75} />
         </RailButton>
 
         <RailButton
@@ -34,19 +34,17 @@ export function Sidebar() {
           onClick={() => setView("terminals")}
         >
           <span className="relative">
-            <SquareTerminal className="size-[19px]" />
+            <SquareTerminal className="size-4" strokeWidth={1.75} />
             {running > 0 && (
-              <span className="absolute -right-1.5 -top-1.5 flex size-3.5 items-center justify-center rounded-full bg-[#3dd68c] text-[8px] font-bold leading-none text-black">
-                {running > 9 ? "9+" : running}
-              </span>
+              <span className="absolute -right-1 -top-0.5 size-1.5 rounded-full bg-state-running" />
             )}
           </span>
         </RailButton>
       </nav>
 
-      <div className="mt-auto flex flex-col items-center gap-1.5">
+      <div className="mt-auto">
         <RailButton label="新建应用" onClick={() => openEditor(null)}>
-          <Plus className="size-[19px]" />
+          <Plus className="size-4" strokeWidth={1.75} />
         </RailButton>
       </div>
     </aside>
@@ -71,18 +69,15 @@ function RailButton({
           type="button"
           onClick={onClick}
           className={cn(
-            "relative flex size-10 items-center justify-center rounded-lg text-muted-foreground transition-colors",
+            "flex size-9 items-center justify-center rounded-md text-[#a1a1a1] transition-colors duration-100",
             "hover:bg-accent hover:text-foreground",
             active && "bg-accent text-foreground",
           )}
         >
-          {active && (
-            <span className="absolute -left-[13px] top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-primary" />
-          )}
           {children}
         </button>
       </TooltipTrigger>
-      <TooltipContent side="right" className="text-xs">
+      <TooltipContent side="right" className="font-mono text-xs">
         {label}
       </TooltipContent>
     </Tooltip>

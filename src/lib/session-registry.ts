@@ -71,9 +71,9 @@ export class SessionClient {
       cursorBlink: true,
       cursorStyle: "bar",
       fontFamily:
-        '"Cascadia Code", "Cascadia Mono", "JetBrains Mono", Consolas, "Courier New", monospace',
+        '"Geist Mono Variable", "Cascadia Mono", Consolas, "Courier New", monospace',
       fontSize: 13,
-      lineHeight: 1.18,
+      lineHeight: 1.35,
       letterSpacing: 0,
       scrollback: 10_000,
       allowProposedApi: true,

@@ -1,7 +1,5 @@
 import { useEffect, useRef } from "react";
-import { RotateCcw, X } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { sessionRegistry } from "@/lib/session-registry";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/use-app-store";
@@ -70,32 +68,25 @@ export function TerminalPane({ appId, active }: TerminalPaneProps) {
       {/* Exited overlay */}
       {session?.state === "exited" && active && (
         <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center">
-          <div className="pointer-events-auto flex items-center gap-2 rounded-lg border border-border/80 bg-popover/95 px-3 py-1.5 text-xs shadow-lg backdrop-blur">
-            <span
-              className={cn(
-                "size-1.5 rounded-full",
-                session.exitCode ? "bg-[#f26d6d]" : "bg-muted-foreground/60",
-              )}
-            />
-            <span className="text-muted-foreground">
-              进程已退出{session.exitCode !== undefined ? ` · 代码 ${session.exitCode}` : ""}
+          <div className="pointer-events-auto flex items-center gap-3 rounded-md border border-border bg-[#0a0a0a] px-3 py-1.5">
+            <span className="font-mono text-[11px] text-[#a1a1a1]">
+              exited{session.exitCode !== undefined ? ` · code ${session.exitCode}` : ""}
             </span>
-            <Button
-              size="sm"
-              variant="secondary"
-              className="h-6 px-2 text-[11px]"
+            <span className="h-3 w-px bg-border" />
+            <button
+              type="button"
               onClick={() => void restartApp(appId)}
+              className="font-mono text-[11px] text-foreground underline decoration-[#333] underline-offset-4 hover:decoration-foreground"
             >
-              <RotateCcw className="size-3" /> 重启
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-6 px-2 text-[11px] text-muted-foreground"
+              restart
+            </button>
+            <button
+              type="button"
               onClick={() => closeTab(appId)}
+              className="font-mono text-[11px] text-[#666] underline decoration-[#333] underline-offset-4 hover:text-foreground"
             >
-              <X className="size-3" /> 关闭
-            </Button>
+              close
+            </button>
           </div>
         </div>
       )}

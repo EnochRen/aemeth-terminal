@@ -1,4 +1,4 @@
-import { Plus, SquareTerminal, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -6,12 +6,10 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { StatusDot } from "@/components/shared/status-pill";
-import { ShellBadge } from "@/components/shared/shell-badge";
 import { TerminalPane } from "@/components/terminals/terminal-pane";
 import { cn } from "@/lib/utils";
 import { sessionRegistry } from "@/lib/session-registry";
@@ -34,55 +32,46 @@ export function TerminalsView() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Win11-style tab strip */}
-      <div className="flex items-end gap-0.5 border-b border-border/40 bg-[#0e1219] px-2 pt-1.5">
-        <div className="flex min-w-0 flex-1 items-end gap-0.5 overflow-x-auto scrollbar-none">
+      {/* Tab strip — underline tabs, geist style */}
+      <div className="flex h-10 shrink-0 items-stretch border-b border-border bg-background px-3">
+        <div className="flex min-w-0 flex-1 items-stretch gap-1 overflow-x-auto scrollbar-none">
           {openTabs.map((appId) => {
             const app = appOf(appId);
             if (!app) return null;
-            const active = appId === activeAppId;
-            const session = sessions[appId];
             return (
               <Tab
                 key={appId}
                 app={app}
-                active={active}
-                running={session?.state === "running"}
+                active={appId === activeAppId}
                 onActivate={() => useAppStore.getState().setActiveTab(appId)}
-                onClose={(e) => {
-                  e.stopPropagation();
-                  useAppStore.getState().closeTab(appId);
-                }}
+                onClose={() => useAppStore.getState().closeTab(appId)}
               />
             );
           })}
         </div>
 
-        <div className="flex shrink-0 items-center gap-1 pb-1 pl-1">
-          {/* Active session meta */}
+        <div className="flex shrink-0 items-center gap-3 pl-3">
           {activeSession && (
-            <div className="mr-1 hidden items-center gap-1.5 lg:flex">
-              <ShellBadge kind={activeSession.shell} />
-              {activeSession.pid && (
-                <span className="font-mono text-[10px] text-muted-foreground">
-                  PID {activeSession.pid}
-                </span>
-              )}
-            </div>
+            <span className="hidden font-mono text-[10.5px] text-[#525252] md:inline">
+              {activeSession.shell}
+              {activeSession.pid ? ` · pid ${activeSession.pid}` : ""}
+            </span>
           )}
-
-          {/* New tab */}
           <DropdownMenu>
             <Tooltip>
               <TooltipTrigger asChild>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="size-7 text-muted-foreground">
-                    <Plus className="size-4" />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 text-[#a1a1a1] hover:text-foreground"
+                  >
+                    <Plus className="size-4" strokeWidth={1.75} />
                   </Button>
                 </DropdownMenuTrigger>
               </TooltipTrigger>
-              <TooltipContent side="bottom" className="text-xs">
-                新建终端标签 (启动应用)
+              <TooltipContent side="bottom" className="font-mono text-xs">
+                新建终端
               </TooltipContent>
             </Tooltip>
             <DropdownMenuContent align="end" className="w-56">
@@ -90,37 +79,22 @@ export function TerminalsView() {
                 <DropdownMenuItem disabled>所有应用都已打开</DropdownMenuItem>
               ) : (
                 <>
-                  <DropdownMenuLabel className="text-[11px] text-muted-foreground">
-                    启动并打开
-                  </DropdownMenuLabel>
+                  <DropdownMenuLabel className="label-micro font-mono">launch</DropdownMenuLabel>
                   {launchable.map((a) => (
                     <DropdownMenuItem
                       key={a.id}
                       onClick={() => void useAppStore.getState().openTerminal(a.id)}
                     >
                       <span
-                        className="size-2 shrink-0 rounded-full"
+                        className="size-1.5 shrink-0 rounded-full"
                         style={{ backgroundColor: a.color }}
                       />
-                      <span className="truncate">{a.name}</span>
-                      <span className="ml-auto text-[10px] text-muted-foreground">
-                        {sessions[a.id]?.state === "running" ? "聚焦" : "启动"}
+                      <span className="truncate text-xs">{a.name}</span>
+                      <span className="ml-auto font-mono text-[10px] text-[#666]">
+                        {sessions[a.id]?.state === "running" ? "focus" : "start"}
                       </span>
                     </DropdownMenuItem>
                   ))}
-                </>
-              )}
-              {apps.length === 0 && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={() => {
-                      useAppStore.getState().setView("apps");
-                      useAppStore.getState().openEditor(null);
-                    }}
-                  >
-                    先去创建一个应用…
-                  </DropdownMenuItem>
                 </>
               )}
             </DropdownMenuContent>
@@ -129,7 +103,7 @@ export function TerminalsView() {
       </div>
 
       {/* Terminal canvas */}
-      <div className="relative min-h-0 flex-1 bg-[#0b0e14]">
+      <div className="relative min-h-0 flex-1 bg-black">
         {openTabs.map((appId) => (
           <TerminalPane key={appId} appId={appId} active={appId === activeAppId} />
         ))}
@@ -141,15 +115,13 @@ export function TerminalsView() {
 function Tab({
   app,
   active,
-  running,
   onActivate,
   onClose,
 }: {
   app: AppConfig;
   active: boolean;
-  running: boolean;
   onActivate: () => void;
-  onClose: (e: React.MouseEvent) => void;
+  onClose: () => void;
 }) {
   const session = useAppStore((s) => s.sessions[app.id]);
   return (
@@ -158,28 +130,33 @@ function Tab({
       aria-selected={active}
       onClick={onActivate}
       onAuxClick={(e) => {
-        // Middle click closes, like Win11 Terminal / browsers.
         if (e.button === 1) {
           e.preventDefault();
           useAppStore.getState().closeTab(app.id);
         }
       }}
       className={cn(
-        "group flex h-8.5 max-w-52 min-w-32 shrink-0 cursor-pointer select-none items-center gap-2 rounded-t-lg border-x border-t px-3 text-xs transition-colors",
-        active
-          ? "border-border/60 bg-[#0b0e14] text-foreground"
-          : "border-transparent text-muted-foreground hover:bg-white/[0.04] hover:text-foreground/80",
+        "group relative flex shrink-0 cursor-pointer select-none items-center gap-2 px-3 text-xs transition-colors duration-100",
+        active ? "text-foreground" : "text-[#a1a1a1] hover:text-foreground",
       )}
     >
-      <StatusDot session={session} className="shrink-0" />
-      <span className="truncate font-medium">{app.name}</span>
-      {running && <span className="sr-only">运行中</span>}
+      {/* underline indicator */}
+      <span
+        className={cn(
+          "absolute inset-x-2 bottom-0 h-px transition-colors",
+          active ? "bg-foreground" : "bg-transparent group-hover:bg-[#333]",
+        )}
+      />
+      <StatusDot session={session} />
+      <span className="max-w-40 truncate font-medium">{app.name}</span>
       <button
         type="button"
-        onClick={onClose}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
         className={cn(
-          "ml-auto flex size-4.5 shrink-0 items-center justify-center rounded-md text-muted-foreground",
-          "hover:bg-white/10 hover:text-foreground",
+          "flex size-4 items-center justify-center rounded-sm text-[#666] hover:bg-[#262626] hover:text-foreground",
           !active && "opacity-0 group-hover:opacity-100",
         )}
         aria-label={`关闭 ${app.name}`}
@@ -195,39 +172,46 @@ function EmptyTerminal({ apps }: { apps: AppConfig[] }) {
   const setView = useAppStore((s) => s.setView);
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-5 bg-[#0b0e14]">
-      <div className="flex size-14 items-center justify-center rounded-2xl border border-border/60 bg-card/50">
-        <SquareTerminal className="size-6 text-[#7c6cf0]" />
-      </div>
+    <div className="flex h-full flex-col items-center justify-center gap-5 bg-black">
+      <pre className="select-none font-mono text-[11px] leading-relaxed text-[#333]">
+{`aemeth terminal
+─────────────────`}
+      </pre>
       <div className="text-center">
-        <h2 className="text-sm font-semibold text-foreground">没有打开的终端</h2>
-        <p className="mt-1 text-xs text-muted-foreground">
-          从下方快速启动一个服务，或前往应用列表
+        <p className="label-micro">no open terminals</p>
+        <p className="mt-1.5 text-[12.5px] text-[#a1a1a1]">
+          从下方启动一个服务，或前往应用列表
         </p>
       </div>
 
       {apps.length > 0 && (
-        <div className="flex max-w-md flex-wrap items-center justify-center gap-2">
+        <div className="flex max-w-md flex-wrap items-center justify-center gap-1.5">
           {apps.slice(0, 8).map((a) => (
             <button
               key={a.id}
               type="button"
               onClick={() => void startApp(a.id)}
-              className="flex items-center gap-2 rounded-lg border border-border/70 bg-card px-3 py-2 text-xs transition-colors hover:border-[#7c6cf0]/50 hover:bg-accent"
+              className="flex items-center gap-2 rounded-md border border-border px-2.5 py-1.5 font-mono text-[11px] text-[#a1a1a1] transition-colors duration-100 hover:border-[#3f3f3f] hover:text-foreground"
             >
-              <span className="size-2 rounded-full" style={{ backgroundColor: a.color }} />
+              <span className="size-1.5 rounded-full" style={{ backgroundColor: a.color }} />
               {a.name}
             </button>
           ))}
         </div>
       )}
 
-      <Button variant="secondary" size="sm" onClick={() => setView("apps")}>
-        前往应用列表
-      </Button>
-      <span className="text-[10px] text-muted-foreground/70">
-        提示：{sessionRegistry.runningCount} 个会话正在后台运行
-      </span>
+      <button
+        type="button"
+        onClick={() => setView("apps")}
+        className="font-mono text-[11px] text-[#525252] underline decoration-[#333] underline-offset-4 transition-colors hover:text-foreground"
+      >
+        前往应用列表 →
+      </button>
+      {sessionRegistry.runningCount > 0 && (
+        <span className="font-mono text-[10.5px] text-[#333]">
+          {sessionRegistry.runningCount} session(s) running in background
+        </span>
+      )}
     </div>
   );
 }

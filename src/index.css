@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -39,96 +40,115 @@
     --color-card: var(--card);
     --color-foreground: var(--foreground);
     --color-background: var(--background);
-    --radius-sm: calc(var(--radius) * 0.6);
-    --radius-md: calc(var(--radius) * 0.8);
-    --radius-lg: var(--radius);
-    --radius-xl: calc(var(--radius) * 1.4);
-    --radius-2xl: calc(var(--radius) * 1.8);
-    --radius-3xl: calc(var(--radius) * 2.2);
-    --radius-4xl: calc(var(--radius) * 2.6);
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 10px;
+    --radius-xl: 12px;
+    --radius-2xl: 14px;
+    --radius-3xl: 16px;
+    --radius-4xl: 20px;
 }
 
-/* Aemeth Terminal is dark-only. Terminal-grade palette: deep blue-black base,
-   electric violet accent, semantic status colors. */
+/* ------------------------------------------------------------------ */
+/* Geist dark — Vercel-flavoured tokens.                               */
+/* Pure black canvas, #ededed ink, hairline #262626 borders.           */
+/* Color is reserved for state: green/amber/red, blue for focus only.  */
+/* ------------------------------------------------------------------ */
 :root,
 .dark {
-    --background: oklch(0.165 0.018 272);          /* #0b0e14 */
-    --foreground: oklch(0.895 0.012 265);          /* #dfe4ee */
-    --card: oklch(0.205 0.022 271);                /* #12161f */
-    --card-foreground: oklch(0.895 0.012 265);
-    --popover: oklch(0.225 0.024 271);             /* #171c27 */
-    --popover-foreground: oklch(0.91 0.01 265);
-    --primary: oklch(0.62 0.185 291);              /* #7c6cf0 */
-    --primary-foreground: oklch(0.985 0.005 291);
-    --secondary: oklch(0.25 0.024 271);
-    --secondary-foreground: oklch(0.9 0.01 265);
-    --muted: oklch(0.24 0.02 270);
-    --muted-foreground: oklch(0.655 0.022 266);    /* #8a93a6 */
-    --accent: oklch(0.27 0.032 281);
-    --accent-foreground: oklch(0.92 0.01 265);
-    --destructive: oklch(0.62 0.205 26);           /* #f26d6d-ish */
-    --border: oklch(0.315 0.024 270);              /* #232a38 */
-    --input: oklch(0.315 0.024 270);
-    --ring: oklch(0.62 0.185 291);
-    --chart-1: oklch(0.62 0.185 291);
-    --chart-2: oklch(0.68 0.14 210);
-    --chart-3: oklch(0.72 0.15 155);
-    --chart-4: oklch(0.75 0.15 80);
-    --chart-5: oklch(0.65 0.2 30);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.155 0.018 272);             /* rail: darker than bg */
-    --sidebar-foreground: oklch(0.895 0.012 265);
-    --sidebar-primary: oklch(0.62 0.185 291);
-    --sidebar-primary-foreground: oklch(0.985 0.005 291);
-    --sidebar-accent: oklch(0.25 0.03 275);
-    --sidebar-accent-foreground: oklch(0.92 0.01 265);
-    --sidebar-border: oklch(1 0 0 / 8%);
-    --sidebar-ring: oklch(0.62 0.185 291);
+    --background: #000000;
+    --foreground: #ededed;
+    --card: #0a0a0a;
+    --card-foreground: #ededed;
+    --popover: #0a0a0a;
+    --popover-foreground: #ededed;
+    --primary: #ededed;              /* white button, black ink */
+    --primary-foreground: #0a0a0a;
+    --secondary: #171717;
+    --secondary-foreground: #ededed;
+    --muted: #171717;
+    --muted-foreground: #a1a1a1;
+    --accent: #171717;               /* hover surface */
+    --accent-foreground: #ededed;
+    --destructive: #e5484d;
+    --border: #262626;               /* hairline */
+    --input: #333333;
+    --ring: #0070f3;                 /* geist blue — focus only */
+    --chart-1: #ededed;
+    --chart-2: #a1a1a1;
+    --chart-3: #666666;
+    --chart-4: #333333;
+    --chart-5: #171717;
+    --radius: 8px;
+    --sidebar: #000000;
+    --sidebar-foreground: #ededed;
+    --sidebar-primary: #ededed;
+    --sidebar-primary-foreground: #0a0a0a;
+    --sidebar-accent: #171717;
+    --sidebar-accent-foreground: #ededed;
+    --sidebar-border: #1f1f1f;
+    --sidebar-ring: #0070f3;
+
+    /* state */
+    --state-running: #30a46c;
+    --state-error: #e5484d;
+    --state-warn: #ffb224;
+    --state-idle: #525252;
 }
 
 @theme {
-    --font-mono: "Cascadia Code", "Cascadia Mono", "JetBrains Mono", Consolas,
-        "Courier New", monospace;
+    --font-mono: 'Geist Mono Variable', 'Cascadia Mono', Consolas, monospace;
+    --color-state-running: var(--state-running);
+    --color-state-error: var(--state-error);
+    --color-state-warn: var(--state-warn);
+    --color-state-idle: var(--state-idle);
 }
 
 @layer base {
     * {
         @apply border-border outline-ring/50;
     }
-    body {
-        @apply bg-background text-foreground antialiased;
-        overscroll-behavior: none;
-    }
     html {
         @apply font-sans;
+        font-size: 15px;
+    }
+    body {
+        @apply bg-background text-foreground antialiased;
+        font-feature-settings: "ss01" on, "cv05" on;
+        letter-spacing: -0.01em;
+        overscroll-behavior: none;
     }
     ::selection {
-        background: oklch(0.62 0.185 291 / 40%);
+        background: rgba(0, 112, 243, 0.4);
+        color: #fff;
+    }
+    h1, h2, h3 {
+        letter-spacing: -0.02em;
     }
 }
 
 /* ------------------------------------------------------------------ */
-/* Scrollbars — slim, terminal-flavoured                               */
+/* Scrollbars — near-invisible, geist grey                             */
 /* ------------------------------------------------------------------ */
 * {
     scrollbar-width: thin;
-    scrollbar-color: oklch(0.34 0.025 270) transparent;
+    scrollbar-color: #333 transparent;
 }
 ::-webkit-scrollbar {
-    width: 9px;
-    height: 9px;
+    width: 10px;
+    height: 10px;
 }
 ::-webkit-scrollbar-track {
     background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-    background: oklch(0.34 0.025 270);
-    border-radius: 5px;
-    border: 2px solid transparent;
+    background: #2a2a2a;
+    border-radius: 6px;
+    border: 3px solid transparent;
     background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-    background: oklch(0.42 0.03 270);
+    background: #3d3d3d;
     background-clip: content-box;
 }
 ::-webkit-scrollbar-corner {
@@ -142,8 +162,17 @@
     }
 }
 
+/* Micro label — the one structural voice of the app */
+@utility label-micro {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #666;
+}
+
 /* ------------------------------------------------------------------ */
-/* xterm.js integration                                                */
+/* xterm.js — black canvas, white ink                                  */
 /* ------------------------------------------------------------------ */
 .xterm {
     height: 100%;
@@ -151,14 +180,8 @@
 }
 .xterm .xterm-viewport {
     scrollbar-width: thin;
-    scrollbar-color: oklch(0.34 0.025 270) transparent;
+    scrollbar-color: #2a2a2a transparent;
     overflow-y: auto !important;
-}
-.xterm .xterm-screen {
-    padding: 2px 0;
-}
-.xterm .xterm-cursor-layer {
-    filter: drop-shadow(0 0 4px oklch(0.62 0.185 291 / 60%));
 }
 
 /* Hide number input spinners in command-delay fields */

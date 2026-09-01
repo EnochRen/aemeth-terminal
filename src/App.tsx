@@ -1,5 +1,4 @@
 import { useEffect } from "react";
-import { Loader2 } from "lucide-react";
 
 import { AppDialog } from "@/components/apps/app-dialog";
 import { AppsView } from "@/components/apps/apps-view";
@@ -45,14 +44,11 @@ export default function App() {
 
 function BootScreen() {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3">
-      <div className="flex size-11 items-center justify-center rounded-xl bg-gradient-to-br from-[#7c6cf0] to-[#4f46b8] text-lg font-bold text-white shadow-[0_0_24px_rgba(124,108,240,0.4)]">
+    <div className="flex h-full flex-col items-center justify-center gap-4">
+      <div className="flex size-8 items-center justify-center rounded-md border border-[#333] font-mono text-sm text-foreground">
         Æ
       </div>
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Loader2 className="size-3.5 animate-spin" />
-        正在加载…
-      </div>
+      <p className="label-micro">loading</p>
     </div>
   );
 }
