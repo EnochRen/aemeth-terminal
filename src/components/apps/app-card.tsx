@@ -22,6 +22,7 @@ import { fmt } from "@/i18n/locales";
 import { useT } from "@/i18n/use-t";
 import { useAppStore } from "@/store/use-app-store";
 import type { AppConfig } from "@/types";
+import { cn } from "@/lib/utils";
 
 /**
  * Deployment-row style card: hairline border, mono data, color only in the
@@ -41,7 +42,14 @@ export function AppCard({ app }: { app: AppConfig }) {
   const exited = session?.state === "exited";
 
   return (
-    <div className="group flex flex-col rounded-lg border border-border bg-card transition-colors duration-100 hover:border-[#3f3f3f]">
+    <div
+      className={cn(
+        "group flex flex-col rounded-lg border bg-card transition-colors duration-100",
+        running
+          ? "border-state-running/60 hover:border-state-running"
+          : "border-border hover:border-[#3f3f3f]",
+      )}
+    >
       {/* Row 1 — identity */}
       <div className="flex items-center gap-2.5 px-4 pt-3.5">
         <span

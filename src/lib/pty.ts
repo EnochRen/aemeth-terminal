@@ -7,6 +7,7 @@ import type { AppConfig, SessionStatus, ShellInfo } from "@/types";
 
 export const PTY_OUTPUT_EVENT = "pty://output";
 export const PTY_EXIT_EVENT = "pty://exit";
+export const CLOSE_BLOCKED_EVENT = "aemeth://close-blocked";
 
 export interface PtyOutputPayload {
   sessionId: string;
@@ -46,6 +47,19 @@ export function ptyList(): Promise<SessionStatus[]> {
 
 export function shellsDetect(): Promise<ShellInfo[]> {
   return invoke("shells_detect");
+}
+
+/**
+ * Confirmed close: Rust destroys the window natively, bypassing the webview
+ * event queue (which may be backlogged with session output).
+ */
+export function forceClose(): Promise<void> {
+  return invoke("close_force");
+}
+
+/** Fired by the native close guard with the number of running sessions. */
+export function listenCloseBlocked(handler: (running: number) => void): Promise<UnlistenFn> {
+  return listen<number>(CLOSE_BLOCKED_EVENT, (e) => handler(e.payload));
 }
 
 export function listenPtyOutput(handler: (payload: PtyOutputPayload) => void): Promise<UnlistenFn> {

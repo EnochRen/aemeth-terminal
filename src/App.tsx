@@ -1,5 +1,4 @@
 import { useEffect } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { AppDialog } from "@/components/apps/app-dialog";
 import { AppsView } from "@/components/apps/apps-view";
@@ -23,7 +22,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useShortcuts } from "@/hooks/use-shortcuts";
 import { fmt } from "@/i18n/locales";
 import { useT } from "@/i18n/use-t";
-import { forceCloseWindow, isCloseForced } from "@/lib/window-close";
+import { forceClose, listenCloseBlocked } from "@/lib/pty";
 import { useAppStore } from "@/store/use-app-store";
 
 export default function App() {
@@ -34,18 +33,13 @@ export default function App() {
     void useAppStore.getState().hydrate();
   }, []);
 
-  // Intercept window close while sessions are running.
+  // Native close guard (see lib.rs): Rust blocks the close and asks us to
+  // confirm when sessions are still running. We deliberately do NOT register
+  // a JS onCloseRequested listener — that would make Tauri route every close
+  // through the (potentially backlogged) webview event queue.
   useEffect(() => {
     let unlisten: (() => void) | null = null;
-    getCurrentWindow()
-      .onCloseRequested((event) => {
-        const s = useAppStore.getState();
-        const running = Object.values(s.sessions).filter((x) => x.state === "running").length;
-        if (!isCloseForced() && s.settings.confirmClose && running > 0) {
-          event.preventDefault();
-          s.setClosePrompt(true);
-        }
-      })
+    listenCloseBlocked(() => useAppStore.getState().setClosePrompt(true))
       .then((fn) => {
         unlisten = fn;
       })
@@ -100,7 +94,7 @@ function CloseConfirmDialog() {
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>{t.settings.closeCancel}</AlertDialogCancel>
-          <AlertDialogAction onClick={() => void forceCloseWindow()}>
+          <AlertDialogAction onClick={() => void forceClose()}>
             {t.settings.closeOk}
           </AlertDialogAction>
         </AlertDialogFooter>

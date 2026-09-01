@@ -5,7 +5,10 @@
  * so output is buffered in xterm's scrollback even while the user is still on
  * the Apps view. Tabs simply attach/detach the terminal to a DOM node.
  */
-import { writeText as clipWriteText } from "@tauri-apps/plugin-clipboard-manager";
+import {
+  readText as clipReadText,
+  writeText as clipWriteText,
+} from "@tauri-apps/plugin-clipboard-manager";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -88,6 +91,7 @@ export class SessionClient {
     this.term.loadAddon(unicode);
     this.term.unicode.activeVersion = "11";
 
+    this.term.attachCustomKeyEventHandler((e) => this.handleKey(e));
     this.term.onData((data) => this.queueInput(textEncoder.encode(data)));
     this.term.onBinary((b64) => this.queueInput(base64ToBytes(b64)));
     this.term.onSelectionChange(() => {
@@ -99,6 +103,97 @@ export class SessionClient {
 
   get sessionId(): string {
     return this.status.sessionId;
+  }
+
+  /**
+   * Editor-style keybindings: Ctrl+C only ever copies (it must never send
+   * ^C and kill the service — stopping goes through the Stop action),
+   * Ctrl+V pastes, plus Ctrl+Shift+A select-all, Ctrl+L clear and Ctrl+F
+   * search.
+   */
+  private handleKey(e: KeyboardEvent): boolean {
+    if (e.type !== "keydown") return true;
+    if (!e.ctrlKey || e.altKey || e.metaKey) return true;
+    switch (e.key.toLowerCase()) {
+      case "c":
+        // Copy-only: with a selection it copies, without one it is a no-op.
+        // ^C is never forwarded, so Ctrl+C cannot terminate the service.
+        this.copySelection();
+        return false;
+      case "v":
+        void this.pasteClipboard();
+        return false;
+      case "a":
+        if (e.shiftKey) {
+          this.term.selectAll();
+          return false;
+        }
+        return true;
+      case "l":
+        this.term.clear();
+        return false;
+      case "f":
+        for (const cb of this.searchListeners) cb();
+        return false;
+      default:
+        return true;
+    }
+  }
+
+  /** Copy the current selection to the clipboard. Returns whether anything was copied. */
+  copySelection(): boolean {
+    if (!this.term.hasSelection()) return false;
+    const selection = this.term.getSelection();
+    if (!selection) return false;
+    void clipWriteText(selection).catch(() => {});
+    return true;
+  }
+
+  /** Paste the system clipboard into the terminal. */
+  async pasteClipboard(): Promise<void> {
+    try {
+      const text = await clipReadText();
+      if (text) this.term.paste(text);
+    } catch {
+      /* clipboard unavailable */
+    }
+  }
+
+  /** Feed the current terminal selection back into the pty as input. */
+  pasteSelection(): boolean {
+    const selection = this.term.getSelection();
+    if (!selection) return false;
+    this.term.paste(selection);
+    return true;
+  }
+
+  clearScreen(): void {
+    this.term.clear();
+  }
+
+  selectAll(): void {
+    this.term.selectAll();
+  }
+
+  /** Whole scrollback as plain text, for “save log to file”. */
+  getBufferText(): string {
+    const buffer = this.term.buffer.active;
+    const lines: string[] = [];
+    for (let i = 0; i < buffer.length; i++) {
+      lines.push(buffer.getLine(i)?.translateToString(true) ?? "");
+    }
+    while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+    return lines.join("\n");
+  }
+
+  private searchListeners = new Set<() => void>();
+
+  /** Subscribe to Ctrl+F requests from the terminal. Returns an unsubscribe fn. */
+  onSearchRequest(cb: () => void): () => void {
+    this.searchListeners.add(cb);
+    return () => {
+      this.searchListeners.delete(cb);
+    };
   }
 
   /** Open the terminal into a DOM node (idempotent). */

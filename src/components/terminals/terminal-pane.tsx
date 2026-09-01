@@ -1,9 +1,27 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import {
+  ClipboardList,
+  ClipboardPaste,
+  Copy,
+  Eraser,
+  FileDown,
+  Search,
+  SquareCheckBig,
+} from "lucide-react";
+import { toast } from "sonner";
 
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { TerminalSearch } from "@/components/terminals/terminal-search";
 import { fmt } from "@/i18n/locales";
 import { useT } from "@/i18n/use-t";
-import { readText as clipReadText, writeText as clipWriteText } from "@tauri-apps/plugin-clipboard-manager";
-
+import { saveTextFile } from "@/lib/save-file";
 import { sessionRegistry } from "@/lib/session-registry";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/use-app-store";
@@ -17,6 +35,9 @@ interface TerminalPaneProps {
  * Mounts one xterm.js instance. All panes stay in the DOM (stacked); the
  * inactive ones are only `invisible`, so their layout — and therefore xterm's
  * fit calculations — keep working.
+ *
+ * Right-click opens an editor-style context menu (copy / paste / …) instead of
+ * pasting directly; copy & paste are also bound to Ctrl+C / Ctrl+V.
  */
 export function TerminalPane({ appId, active }: TerminalPaneProps) {
   const t = useT();
@@ -25,6 +46,9 @@ export function TerminalPane({ appId, active }: TerminalPaneProps) {
   const session = useAppStore((s) => s.sessions[appId]);
   const restartApp = useAppStore((s) => s.restartApp);
   const closeTab = useAppStore((s) => s.closeTab);
+
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [hasSelection, setHasSelection] = useState(false);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -42,21 +66,32 @@ export function TerminalPane({ appId, active }: TerminalPaneProps) {
     }
   }, [active, client]);
 
-  // Right click: copy if there is a selection, otherwise paste — classic
-  // Windows console behaviour.
-  const onContextMenu = async (e: React.MouseEvent) => {
-    e.preventDefault();
+  // Bridge Ctrl+F from the terminal to the search bar, and keep the
+  // selection state fresh for the context menu's disabled states.
+  useEffect(() => {
     if (!client) return;
-    const selection = client.term.getSelection();
+    const offSearch = client.onSearchRequest(() => setSearchOpen(true));
+    const disp = client.term.onSelectionChange(() =>
+      setHasSelection(client.term.hasSelection()),
+    );
+    return () => {
+      offSearch();
+      disp.dispose();
+    };
+  }, [client]);
+
+  const closeSearch = () => {
+    setSearchOpen(false);
+    client?.focus();
+  };
+
+  const handleSaveLog = async () => {
+    if (!client) return;
     try {
-      if (selection) {
-        await clipWriteText(selection);
-      } else {
-        const text = await clipReadText();
-        if (text) client.term.paste(text);
-      }
+      const path = await saveTextFile(client.getBufferText(), `${client.app.name}-log.txt`);
+      if (path) toast.success(t.toasts.logSaved);
     } catch {
-      /* clipboard unavailable */
+      toast.error(t.toasts.logFailed);
     }
   };
 
@@ -64,11 +99,50 @@ export function TerminalPane({ appId, active }: TerminalPaneProps) {
 
   return (
     <div className={cn("absolute inset-0", active ? "visible z-10" : "invisible z-0")}>
-      <div
-        ref={containerRef}
-        onContextMenu={(e) => void onContextMenu(e)}
-        className="h-full w-full cursor-text px-2 pb-2 pt-1.5"
-      />
+      <ContextMenu
+        onOpenChange={(open) => {
+          if (!open) client.focus();
+          setHasSelection(client.term.hasSelection());
+        }}
+      >
+        <ContextMenuTrigger asChild>
+          <div
+            ref={containerRef}
+            className="h-full w-full cursor-text px-2 pb-2 pt-1.5"
+          />
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-72">
+          <ContextMenuItem disabled={!hasSelection} onClick={() => client.copySelection()}>
+            <Copy /> {t.menu.copy}
+            <ContextMenuShortcut className="font-mono">Ctrl+C, Ctrl+Shift+C</ContextMenuShortcut>
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => void client.pasteClipboard()}>
+            <ClipboardPaste /> {t.menu.paste}
+            <ContextMenuShortcut className="font-mono">Ctrl+V, Ctrl+Shift+V</ContextMenuShortcut>
+          </ContextMenuItem>
+          <ContextMenuItem disabled={!hasSelection} onClick={() => client.pasteSelection()}>
+            <ClipboardList /> {t.menu.pasteSelection}
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => client.selectAll()}>
+            <SquareCheckBig /> {t.menu.selectAll}
+            <ContextMenuShortcut className="font-mono">Ctrl+Shift+A</ContextMenuShortcut>
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={() => client.clearScreen()}>
+            <Eraser /> {t.menu.clear}
+            <ContextMenuShortcut className="font-mono">Ctrl+L, Ctrl+Shift+L</ContextMenuShortcut>
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => setSearchOpen(true)}>
+            <Search /> {t.menu.search}
+            <ContextMenuShortcut className="font-mono">Ctrl+F</ContextMenuShortcut>
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => void handleSaveLog()}>
+            <FileDown /> {t.menu.saveLog}
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+
+      {searchOpen && <TerminalSearch client={client} onClose={closeSearch} />}
 
       {/* Exited overlay */}
       {session?.state === "exited" && active && (
