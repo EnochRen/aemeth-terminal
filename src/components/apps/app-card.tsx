@@ -3,9 +3,11 @@ import {
   Pencil,
   Play,
   RotateCcw,
+  Copy,
   Square,
   SquareTerminal,
   Trash2,
+  ExternalLink,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -20,14 +22,11 @@ import { ShellBadge } from "@/components/shared/shell-badge";
 import { StatusPill } from "@/components/shared/status-pill";
 import { fmt } from "@/i18n/locales";
 import { useT } from "@/i18n/use-t";
+import { openUrl } from "@/lib/pty";
 import { useAppStore } from "@/store/use-app-store";
 import type { AppConfig } from "@/types";
 import { cn } from "@/lib/utils";
 
-/**
- * Deployment-row style card: hairline border, mono data, color only in the
- * identity dot and the status dot. Actions surface on hover.
- */
 export function AppCard({ app }: { app: AppConfig }) {
   const t = useT();
   const session = useAppStore((s) => s.sessions[app.id]);
@@ -36,6 +35,7 @@ export function AppCard({ app }: { app: AppConfig }) {
   const restartApp = useAppStore((s) => s.restartApp);
   const openTerminal = useAppStore((s) => s.openTerminal);
   const openEditor = useAppStore((s) => s.openEditor);
+  const cloneApp = useAppStore((s) => s.cloneApp);
   const requestDelete = useAppStore((s) => s.requestDelete);
 
   const running = session?.state === "running";
@@ -80,7 +80,10 @@ export function AppCard({ app }: { app: AppConfig }) {
                 <DropdownMenuItem onClick={() => void restartApp(app.id)}>
                   <RotateCcw className="size-3.5" /> {t.card.restart}
                 </DropdownMenuItem>
-                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => cloneApp(app)}>
+              <Copy className="size-3.5" /> {t.card.clone}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
               </>
             )}
             <DropdownMenuItem onClick={() => openEditor(app)}>
@@ -111,7 +114,22 @@ export function AppCard({ app }: { app: AppConfig }) {
           <span className="flex items-center gap-2 font-mono text-[10.5px] text-[#666]">
             {(session.ports?.length ?? 0) > 0 && (
               <span className="text-state-running" title={session.ports!.map((p) => `:${p}`).join(", ")}>
-                {session.ports!.map((p) => `:${p}`).join(" ")}
+                {session.ports!.map((p, i) => (
+                  <span key={p}>
+                    {i > 0 && " "}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void openUrl(`http://localhost:${p}`);
+                      }}
+                      className="inline-flex items-center gap-0.5 rounded px-0.5 hover:bg-accent hover:text-state-running transition-colors"
+                      title={`Open http://localhost:${p}`}
+                    >
+                      :{p} <ExternalLink className="size-2.5" />
+                    </button>
+                  </span>
+                ))}
               </span>
             )}
             {session.pid !== undefined && <span>{fmt(t.card.pid, { pid: session.pid })}</span>}

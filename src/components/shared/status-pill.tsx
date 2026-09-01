@@ -7,7 +7,6 @@ interface StatusPillProps {
   className?: string;
 }
 
-/** Monospace status readout — color carried only by the dot. */
 export function StatusPill({ session, className }: StatusPillProps) {
   const t = useT();
   if (!session) {
@@ -36,7 +35,6 @@ export function StatusPill({ session, className }: StatusPillProps) {
   );
 }
 
-/** 6px dot used inside terminal tabs. */
 export function StatusDot({ session, className }: StatusPillProps) {
   if (!session) return <span className={cn("size-1.5 rounded-full bg-state-idle", className)} />;
   if (session.state === "running") {

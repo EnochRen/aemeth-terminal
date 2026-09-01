@@ -1,19 +1,8 @@
-/**
- * Tiny inline SVG sparkline — used for CPU / memory trend charts in the
- * process details dialog and similar compact dashboards.
- *
- * Data points are normalized so they always fill the chart vertically;
- * the line is drawn left‑to‑right with the most recent sample on the right.
- */
-
 interface SparklineProps {
-  /** Array of numeric values, oldest first. */
   data: number[];
   width?: number;
   height?: number;
-  /** Stroke colour (hex or tailwind var). */
   stroke?: string;
-  /** Filled area under the line (semi‑transparent). */
   fill?: string;
   className?: string;
 }

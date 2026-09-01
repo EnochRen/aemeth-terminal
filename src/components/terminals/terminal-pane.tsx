@@ -31,14 +31,6 @@ interface TerminalPaneProps {
   active: boolean;
 }
 
-/**
- * Mounts one xterm.js instance. All panes stay in the DOM (stacked); the
- * inactive ones are only `invisible`, so their layout — and therefore xterm's
- * fit calculations — keep working.
- *
- * Right-click opens an editor-style context menu (copy / paste / …) instead of
- * pasting directly; copy & paste are also bound to Ctrl+C / Ctrl+V.
- */
 export function TerminalPane({ appId, active }: TerminalPaneProps) {
   const t = useT();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -67,8 +59,6 @@ export function TerminalPane({ appId, active }: TerminalPaneProps) {
     }
   }, [active, client]);
 
-  // Bridge Ctrl+F from the terminal to the search bar, and keep the
-  // selection state fresh for the context menu's disabled states.
   useEffect(() => {
     if (!client) return;
     const offSearch = client.onSearchRequest(() => setSearchOpen(true));

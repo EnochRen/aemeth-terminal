@@ -15,7 +15,6 @@ import type { ShellKind } from "@/types";
 
 const SCROLLBACK_OPTIONS = [1_000, 5_000, 10_000, 20_000];
 
-/** Full-page settings — Vercel-style: centered column, hairline rows. */
 export function SettingsView() {
   const t = useT();
   const settings = useAppStore((s) => s.settings);

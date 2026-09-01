@@ -10,7 +10,6 @@ const SHELL_LABEL: Record<ShellKind, string> = {
   sh: "sh",
 };
 
-/** Monochrome monospace shell tag — no color, just type. */
 export function ShellBadge({ kind, className }: { kind: ShellKind; className?: string }) {
   return (
     <span

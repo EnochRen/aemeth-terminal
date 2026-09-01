@@ -6,10 +6,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useT } from "@/i18n/use-t";
 import { cn } from "@/lib/utils";
 
-/**
- * Custom title bar replacing the native frame: drag region on the left,
- * Windows-style window controls on the right.
- */
 export function TitleBar() {
   const t = useT();
   const [maximized, setMaximized] = useState(false);

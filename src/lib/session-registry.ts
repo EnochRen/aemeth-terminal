@@ -1,10 +1,3 @@
-/**
- * Session registry — owns one xterm.js Terminal per live pty session.
- *
- * Terminals are created the moment a session starts (before any DOM exists),
- * so output is buffered in xterm's scrollback even while the user is still on
- * the Apps view. Tabs simply attach/detach the terminal to a DOM node.
- */
 import {
   readText as clipReadText,
   writeText as clipWriteText,
@@ -30,7 +23,6 @@ import {
 } from "@/lib/pty";
 import type { AppConfig, SessionStatus } from "@/types";
 
-/** Geist-flavoured ANSI palette on a pure black canvas. */
 const XTERM_THEME = {
   background: "#000000",
   foreground: "#ededed",
@@ -107,12 +99,6 @@ export class SessionClient {
     return this.status.sessionId;
   }
 
-  /**
-   * Editor-style keybindings: Ctrl+C only ever copies (it must never send
-   * ^C and kill the service — stopping goes through the Stop action),
-   * Ctrl+V pastes, plus Ctrl+Shift+A select-all, Ctrl+L clear and Ctrl+F
-   * search.
-   */
   private handleKey(e: KeyboardEvent): boolean {
     if (e.type !== "keydown") return true;
     if (!e.ctrlKey || e.altKey || e.metaKey) return true;
@@ -142,7 +128,6 @@ export class SessionClient {
     }
   }
 
-  /** Copy the current selection to the clipboard. Returns whether anything was copied. */
   copySelection(): boolean {
     if (!this.term.hasSelection()) return false;
     const selection = this.term.getSelection();
@@ -151,7 +136,6 @@ export class SessionClient {
     return true;
   }
 
-  /** Paste the system clipboard into the terminal. */
   async pasteClipboard(): Promise<void> {
     try {
       const text = await clipReadText();
@@ -161,7 +145,6 @@ export class SessionClient {
     }
   }
 
-  /** Feed the current terminal selection back into the pty as input. */
   pasteSelection(): boolean {
     const selection = this.term.getSelection();
     if (!selection) return false;
@@ -177,7 +160,6 @@ export class SessionClient {
     this.term.selectAll();
   }
 
-  /** Whole scrollback as plain text, for “save log to file”. */
   getBufferText(): string {
     const buffer = this.term.buffer.active;
     const lines: string[] = [];
@@ -190,7 +172,6 @@ export class SessionClient {
 
   private searchListeners = new Set<() => void>();
 
-  /** Subscribe to Ctrl+F requests from the terminal. Returns an unsubscribe fn. */
   onSearchRequest(cb: () => void): () => void {
     this.searchListeners.add(cb);
     return () => {
@@ -198,7 +179,6 @@ export class SessionClient {
     };
   }
 
-  /** Open the terminal into a DOM node (idempotent). */
   attach(el: HTMLElement): void {
     if (!this.opened) {
       this.term.open(el);
@@ -216,7 +196,6 @@ export class SessionClient {
     this.fitNow();
   }
 
-  /** Fit to the current container and tell the backend the new grid size. */
   fitNow(): void {
     if (!this.opened) return;
     try {
@@ -282,12 +261,10 @@ class SessionRegistry {
   private starting = new Set<string>();
   private initialized = false;
 
-  /** Live terminal preferences, pushed by the settings store. */
   terminalFontSize = 13;
   scrollback = 10_000;
   copyOnSelect = false;
 
-  /** Apply terminal options to every live session. */
   applyTerminalOptions(opts: { fontSize?: number; scrollback?: number }): void {
     if (opts.fontSize) this.terminalFontSize = opts.fontSize;
     if (opts.scrollback) this.scrollback = opts.scrollback;
@@ -352,7 +329,6 @@ class SessionRegistry {
     return sessionId ? this.clients.get(sessionId) : undefined;
   }
 
-  /** Launch a pty session for the app and create its terminal. */
   async start(app: AppConfig): Promise<SessionClient> {
     const existing = this.getByApp(app.id);
     if (existing && existing.status.state === "running") return existing;
@@ -384,7 +360,6 @@ class SessionRegistry {
     }
   }
 
-  /** Ask the backend to kill the session (exit event follows). */
   async stop(appId: string): Promise<void> {
     const client = this.getByApp(appId);
     if (client && client.status.state === "running") {
@@ -392,7 +367,6 @@ class SessionRegistry {
     }
   }
 
-  /** Drop the terminal and all bookkeeping for the app. */
   remove(appId: string): void {
     const sessionId = this.appToSession.get(appId);
     if (!sessionId) return;
@@ -401,7 +375,6 @@ class SessionRegistry {
     this.appToSession.delete(appId);
   }
 
-  /** Restart an exited session (or start a stopped one). */
   async restart(app: AppConfig): Promise<SessionClient> {
     this.remove(app.id);
     return this.start(app);

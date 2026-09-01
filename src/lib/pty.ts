@@ -1,6 +1,3 @@
-/**
- * Typed IPC layer over the Tauri PTY backend (`src-tauri/src/pty.rs`).
- */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AppConfig, SessionStatus, ShellInfo } from "@/types";
@@ -29,7 +26,6 @@ export interface HealthPayload {
   healthy: boolean;
 }
 
-/** Spec sent to the backend when launching a session. */
 export interface StartSpec {
   appId: string;
   name: string;
@@ -66,24 +62,18 @@ export function shellsDetect(): Promise<ShellInfo[]> {
   return invoke("shells_detect");
 }
 
-/**
- * Confirmed close: Rust destroys the window natively, bypassing the webview
- * event queue (which may be backlogged with session output).
- */
 export function forceClose(): Promise<void> {
   return invoke("close_force");
 }
 
-/**
- * Graceful shutdown: kill every session tree (parents first, quiet, exit
- * code reported as 0) and wait until nothing is left. Resolves when the
- * backend is done (bounded wait), so the caller can then `forceClose()`.
- */
 export function shutdownSessions(): Promise<void> {
   return invoke("shutdown_sessions");
 }
 
-/** Fired by the native close guard with the number of running sessions. */
+export function openUrl(url: string): Promise<void> {
+  return invoke("open_url", { url });
+}
+
 export function listenCloseBlocked(handler: (running: number) => void): Promise<UnlistenFn> {
   return listen<number>(CLOSE_BLOCKED_EVENT, (e) => handler(e.payload));
 }
@@ -103,10 +93,6 @@ export function listenPtyPorts(handler: (payload: PtyPortsPayload) => void): Pro
 export function listenHealth(handler: (payload: HealthPayload) => void): Promise<UnlistenFn> {
   return listen<HealthPayload>(HEALTH_EVENT, (e) => handler(e.payload));
 }
-
-/* ------------------------------------------------------------------ */
-/* base64 helpers                                                      */
-/* ------------------------------------------------------------------ */
 
 const B64_CHUNK = 0x8000;
 

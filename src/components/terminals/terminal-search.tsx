@@ -14,7 +14,6 @@ const SEARCH_OPTIONS = {
   },
 };
 
-/** Floating search bar (Ctrl+F) bound to one terminal's SearchAddon. */
 export function TerminalSearch({
   client,
   onClose,

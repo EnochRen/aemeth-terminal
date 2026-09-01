@@ -1,7 +1,3 @@
-/**
- * Global app state: persisted app configs, live session status, tab layout.
- * Persisted via `tauri-plugin-store` (`aemeth.json` in the app data dir).
- */
 import { create } from "zustand";
 import { Store } from "@tauri-apps/plugin-store";
 import { toast } from "sonner";
@@ -43,8 +39,11 @@ interface AppState {
   locale: Locale;
   settings: AppSettings;
   closePromptOpen: boolean;
-  /** Graceful shutdown in progress ("closing sessions…" overlay). */
   shuttingDown: boolean;
+  /** True when the editor was opened with `cloneApp` — next save creates a new app. */
+  editorClone: boolean;
+  /** Batch operation in progress ("starting" | "stopping" | null). */
+  batchState: "starting" | "stopping" | null;
 
   hydrate: () => Promise<void>;
   setLocale: (locale: Locale) => Promise<void>;
@@ -56,6 +55,8 @@ interface AppState {
 
   openEditor: (app: AppConfig | null) => void;
   closeEditor: () => void;
+  /** Open the editor pre-filled with a copy of `app`. Saving will create a new entry. */
+  cloneApp: (app: AppConfig) => void;
   saveApp: (app: AppConfig) => Promise<void>;
   requestDelete: (app: AppConfig | null) => void;
   deleteApp: () => Promise<void>;
@@ -63,6 +64,8 @@ interface AppState {
   startApp: (appId: string, focus?: boolean) => Promise<void>;
   stopApp: (appId: string) => Promise<void>;
   restartApp: (appId: string) => Promise<void>;
+  batchStartApps: (appIds: string[]) => Promise<void>;
+  batchStopApps: (appIds: string[]) => Promise<void>;
   openTerminal: (appId: string) => Promise<void>;
   closeTab: (appId: string) => void;
   setActiveTab: (appId: string) => void;
@@ -87,6 +90,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
   settings: { ...DEFAULT_SETTINGS },
   closePromptOpen: false,
   shuttingDown: false,
+  editorClone: false,
+  batchState: null,
 
   setClosePrompt: (open) => set({ closePromptOpen: open }),
 
@@ -193,8 +198,10 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   setView: (view) => set({ view }),
 
-  openEditor: (app) => set({ editorApp: app, editorOpen: true }),
-  closeEditor: () => set({ editorOpen: false, editorApp: null }),
+  openEditor: (app) => set({ editorApp: app, editorOpen: true, editorClone: false }),
+  closeEditor: () => set({ editorOpen: false, editorApp: null, editorClone: false }),
+
+  cloneApp: (app) => set({ editorApp: app, editorOpen: true, editorClone: true }),
 
   saveApp: async (app) => {
     const store = await getStore();
@@ -281,6 +288,34 @@ export const useAppStore = create<AppState>()((set, get) => ({
     }
   },
 
+  batchStartApps: async (appIds) => {
+    if (get().batchState) return;
+    set({ batchState: "starting" });
+    try {
+      for (const appId of appIds) {
+        await get().startApp(appId, false);
+      }
+    } finally {
+      set({ batchState: null });
+    }
+  },
+
+  batchStopApps: async (appIds) => {
+    if (get().batchState) return;
+    set({ batchState: "stopping" });
+    try {
+      for (const appId of appIds) {
+        const session = get().sessions[appId];
+        if (session?.state === "running") {
+          await sessionRegistry.stop(appId);
+          await new Promise((r) => setTimeout(r, 150));
+        }
+      }
+    } finally {
+      set({ batchState: null });
+    }
+  },
+
   openTerminal: async (appId) => {
     const session = get().sessions[appId];
     if (!session) {
@@ -346,7 +381,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
 }));
 
-/** Derive a display-friendly runtime state for an app. */
 export function runtimeState(
   sessions: Record<string, SessionStatus>,
   appId: string,

@@ -4,7 +4,6 @@ import { useT } from "@/i18n/use-t";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/use-app-store";
 
-/** Flat activity rail — black, hairline border, grey→white on active. */
 export function Sidebar() {
   const t = useT();
   const view = useAppStore((s) => s.view);

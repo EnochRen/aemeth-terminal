@@ -1,4 +1,3 @@
-/** Logical shell identifiers — mirrors `src-tauri/src/shells.rs`. */
 export type ShellKind = "powershell" | "pwsh" | "cmd" | "bash" | "zsh" | "sh";
 
 export interface ShellInfo {
@@ -9,14 +8,12 @@ export interface ShellInfo {
   defaultArgs: string[];
 }
 
-/** One preset line typed into the shell after startup. */
 export interface PresetCommand {
   command: string;
   /** Milliseconds to wait after sending this line before the next one. */
   delayMs: number;
 }
 
-/** Persisted configuration of a launchable app/service. */
 export interface AppConfig {
   id: string;
   name: string;
@@ -44,7 +41,6 @@ export interface AppConfig {
 
 export type SessionState = "running" | "exited";
 
-/** Lifecycle snapshot of a pty session — mirrors `SessionStatus` in Rust. */
 export interface SessionStatus {
   sessionId: string;
   appId: string;
@@ -66,7 +62,6 @@ export interface SessionStatus {
 
 export type AppRuntimeState = "stopped" | "starting" | "running" | "exited";
 
-/** One system process — mirrors `ProcessInfo` in Rust. */
 export interface ProcessInfo {
   pid: number;
   ppid: number | null;
@@ -82,7 +77,6 @@ export interface ProcessInfo {
   ports: number[];
 }
 
-/** Deep detail for a single process — mirrors `ProcessDetail` in Rust. */
 export interface ProcessDetail {
   pid: number;
   ppid: number | null;
@@ -99,13 +93,14 @@ export interface ProcessDetail {
   diskWriteBytes: number;
 }
 
-/** Global, persisted preferences. */
 export interface AppSettings {
   terminalFontSize: number;
   scrollback: number;
   copyOnSelect: boolean;
   confirmClose: boolean;
   defaultShell: ShellKind | "auto";
+  /** Apps page layout preference. */
+  appsViewMode: "card" | "table";
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -114,9 +109,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   copyOnSelect: false,
   confirmClose: true,
   defaultShell: "auto",
+  appsViewMode: "card",
 };
 
-/** Muted identity dots — borrowed from the Geist scale. */
 export const APP_COLORS = [
   "#ededed",
   "#0072f5",

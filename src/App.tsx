@@ -33,12 +33,6 @@ export default function App() {
     void useAppStore.getState().hydrate();
   }, []);
 
-  // Native close guard (see lib.rs): Rust blocks the close while sessions
-  // are running and asks us to handle the UX. With confirmClose on we show
-  // the confirm dialog first; otherwise we go straight to the shutdown
-  // overlay. We deliberately do NOT register a JS onCloseRequested listener —
-  // that would make Tauri route every close through the (potentially
-  // backlogged) webview event queue.
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     listenCloseBlocked(() => {
@@ -117,7 +111,6 @@ function CloseConfirmDialog() {
   );
 }
 
-/** Full-screen "shutting down" state shown while sessions are killed. */
 function ShutdownOverlay() {
   const t = useT();
   const shuttingDown = useAppStore((s) => s.shuttingDown);

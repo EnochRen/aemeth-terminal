@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
-import { LayoutGrid, List, Play, MoreHorizontal, Pencil, Square, SquareTerminal, Trash2, RotateCcw } from "lucide-react";
+import { LayoutGrid, List, Play, MoreHorizontal, Pencil, Square, SquareTerminal, Trash2, RotateCcw, Loader2 } from "lucide-react";
 
 import { AppCard } from "@/components/apps/app-card";
 import { ShellBadge } from "@/components/shared/shell-badge";
 import { StatusPill, StatusDot } from "@/components/shared/status-pill";
 import { Button } from "@/components/ui/button";
+import { openUrl } from "@/lib/pty";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,10 +25,14 @@ export function AppsView() {
   const t = useT();
   const apps = useAppStore((s) => s.apps);
   const sessions = useAppStore((s) => s.sessions);
-  const startApp = useAppStore((s) => s.startApp);
-  const stopApp = useAppStore((s) => s.stopApp);
+  const batchStartApps = useAppStore((s) => s.batchStartApps);
+  const batchStopApps = useAppStore((s) => s.batchStopApps);
+  const batchState = useAppStore((s) => s.batchState);
 
-  const [mode, setMode] = useState<ViewMode>("card");
+  const settings = useAppStore((s) => s.settings);
+  const setSettings = useAppStore((s) => s.setSettings);
+  const mode = settings.appsViewMode;
+  const setMode = (v: ViewMode) => setSettings({ appsViewMode: v });
   const [activeTag, setActiveTag] = useState<string | null>(null);
 
   // Unique tags across all apps.
@@ -129,17 +134,29 @@ export function AppsView() {
             <Button
               size="sm"
               className="h-6 gap-1 px-2 text-[10px]"
-              onClick={() => filtered.forEach((a) => void startApp(a.id))}
+              disabled={batchState !== null}
+              onClick={() => void batchStartApps(filtered.map((a) => a.id))}
             >
-              <Play className="size-3" /> {t.apps.startAll}
+              {batchState === "starting" ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <Play className="size-3" />
+              )}
+              {t.apps.startAll}
             </Button>
             <Button
               size="sm"
               variant="ghost"
               className="h-6 gap-1 px-2 text-[10px] text-[#a1a1a1]"
-              onClick={() => filtered.forEach((a) => void stopApp(a.id))}
+              disabled={batchState !== null}
+              onClick={() => void batchStopApps(filtered.map((a) => a.id))}
             >
-              <Square className="size-3" /> {t.apps.stopAll}
+              {batchState === "stopping" ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <Square className="size-3" />
+              )}
+              {t.apps.stopAll}
             </Button>
           </div>
         </div>
@@ -162,10 +179,6 @@ export function AppsView() {
     </div>
   );
 }
-
-/* ------------------------------------------------------------------ */
-/* Table mode                                                         */
-/* ------------------------------------------------------------------ */
 
 function AppTable({
   apps,
@@ -248,11 +261,23 @@ function AppTable({
                   <ShellBadge kind={app.shell} />
                 </td>
 
-                {/* Ports */}
+{/* Ports */}
                 <td className="hidden px-2 py-1.5 xl:table-cell">
                   {running && (session?.ports?.length ?? 0) > 0 ? (
                     <span className="text-state-running">
-                      {session!.ports!.map((p) => `:${p}`).join(" ")}
+                      {session!.ports!.map((p, i) => (
+                        <span key={p}>
+                          {i > 0 && " "}
+                          <button
+                            type="button"
+                            onClick={() => void openUrl(`http://localhost:${p}`)}
+                            className="inline-flex items-center gap-0.5 rounded px-0.5 hover:bg-accent transition-colors"
+                            title={`Open http://localhost:${p}`}
+                          >
+                            :{p}
+                          </button>
+                        </span>
+                      ))}
                     </span>
                   ) : (
                     <span className="text-[#3f3f3f]">—</span>
