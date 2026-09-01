@@ -209,7 +209,7 @@ export function AppDialog() {
             <TabsTrigger value="env">{t.dialog.tabEnv}</TabsTrigger>
           </TabsList>
 
-          <div className="max-h-[55vh] overflow-y-auto pr-1">
+          <div className="max-h-[55vh] overflow-y-auto px-1">
             {/* ──────────── General ──────────── */}
             <TabsContent value="general" className="mt-0 space-y-5">
               <div className="grid gap-2">

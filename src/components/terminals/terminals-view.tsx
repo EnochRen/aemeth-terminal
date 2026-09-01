@@ -39,7 +39,7 @@ export function TerminalsView() {
     <div className="flex h-full flex-col">
       {/* Tab strip — underline tabs, geist style */}
       <div className="flex h-10 shrink-0 items-stretch border-b border-border bg-background px-3">
-        <div className="flex min-w-0 flex-1 items-stretch gap-1 overflow-x-auto scrollbar-none">
+        <div className="flex min-w-0 flex-1 items-stretch gap-1 overflow-x-auto scrollbar-none py-px">
           {openTabs.map((appId) => {
             const app = appOf(appId);
             if (!app) return null;

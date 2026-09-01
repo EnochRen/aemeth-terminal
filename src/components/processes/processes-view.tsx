@@ -218,7 +218,7 @@ export function ProcessesView() {
       </header>
 
       {/* Table */}
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="min-h-0 flex-1 overflow-auto p-px">
         <table className="w-full border-collapse font-mono text-[11.5px]">
           <thead className="sticky top-0 z-10 bg-background">
             <tr className="border-b border-border text-left text-[10.5px] text-[#666]">
@@ -313,7 +313,7 @@ export function ProcessesView() {
 
             {/* Command line */}
             <Section title={t.proc.cmdline}>
-              <pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-[11.5px] leading-relaxed text-[#a1a1a1]">
+              <pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-[11.5px] leading-relaxed text-[#a1a1a1] py-0.5">
                 {detail.cmd || t.proc.empty}
               </pre>
             </Section>
@@ -370,7 +370,7 @@ export function ProcessesView() {
             {/* Environment variables */}
             <Section title={t.proc.environ}>
               {detail.environ.length > 0 ? (
-                <pre className="max-h-60 overflow-y-auto font-mono text-[11px] leading-relaxed text-[#a1a1a1]">
+                <pre className="max-h-60 overflow-y-auto font-mono text-[11px] leading-relaxed text-[#a1a1a1] py-0.5 px-1">
                   {detail.environ.join("\n")}
                 </pre>
               ) : (
