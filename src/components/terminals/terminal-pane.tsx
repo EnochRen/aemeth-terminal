@@ -2,6 +2,8 @@ import { useEffect, useRef } from "react";
 
 import { fmt } from "@/i18n/locales";
 import { useT } from "@/i18n/use-t";
+import { readText as clipReadText, writeText as clipWriteText } from "@tauri-apps/plugin-clipboard-manager";
+
 import { sessionRegistry } from "@/lib/session-registry";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/use-app-store";
@@ -48,9 +50,9 @@ export function TerminalPane({ appId, active }: TerminalPaneProps) {
     const selection = client.term.getSelection();
     try {
       if (selection) {
-        await navigator.clipboard.writeText(selection);
+        await clipWriteText(selection);
       } else {
-        const text = await navigator.clipboard.readText();
+        const text = await clipReadText();
         if (text) client.term.paste(text);
       }
     } catch {

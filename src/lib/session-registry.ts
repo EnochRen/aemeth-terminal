@@ -5,6 +5,7 @@
  * so output is buffered in xterm's scrollback even while the user is still on
  * the Apps view. Tabs simply attach/detach the terminal to a DOM node.
  */
+import { writeText as clipWriteText } from "@tauri-apps/plugin-clipboard-manager";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -92,7 +93,7 @@ export class SessionClient {
     this.term.onSelectionChange(() => {
       if (!sessionRegistry.copyOnSelect) return;
       const selection = this.term.getSelection();
-      if (selection) void navigator.clipboard.writeText(selection).catch(() => {});
+      if (selection) void clipWriteText(selection).catch(() => {});
     });
   }
 

@@ -7,6 +7,7 @@
     "core:default",
     "store:default",
     "dialog:default",
+    "clipboard-manager:default",
     "core:event:default",
     "core:window:allow-start-dragging",
     "core:window:allow-minimize",
