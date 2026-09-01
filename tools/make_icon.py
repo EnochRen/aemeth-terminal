@@ -1,13 +1,14 @@
 """Render the Aemeth Terminal app icon.
 
-Design: geometric line-built "Æ" monogram (the app's brand glyph) on a
-near-black rounded square with a hairline border. The Æ's middle bar is a
-DETACHED pink dash — reads as the letter stroke and a subtle cursor nod.
-Everything else is the brand purple gradient.
+Design: Vercel-grade minimal "swiss-army knife" mark on a near-black rounded
+square with a hairline border. Two elements only:
+  * a white horizontal handle bar,
+  * a pink tapered blade unfolding from it (the pink accent / 一撇).
 Renders at 2048 with numpy gradients, downsamples with LANCZOS.
 """
 from __future__ import annotations
 
+import math
 import os
 
 import numpy as np
@@ -18,93 +19,73 @@ ROOT = os.path.dirname(HERE)
 N = 2048  # master render size
 
 # ---- palette -------------------------------------------------------------
-BG = (11, 14, 20)            # #0b0e14
-BORDER = (39, 44, 58)        # #272c3a hairline
-PURPLE_A = (143, 127, 245)   # #8f7ff5
-PURPLE_B = (90, 78, 214)     # #5a4ed6
-PINK_TOP = (255, 122, 184)   # #ff7ab8
-PINK_BOT = (255, 47, 142)    # #ff2f8e
+BG = (11, 14, 20)          # #0b0e14
+BORDER = (39, 44, 58)      # #272c3a hairline
+WHITE = (245, 245, 245)    # #f5f5f5 handle
+PINK_TOP = (255, 122, 184)  # #ff7ab8
+PINK_BOT = (255, 47, 142)   # #ff2f8e
 
-# ---- geometry (in 1024 units, scaled to master) ---------------------------
+# ---- geometry (in 1024 units) ---------------------------------------------
 S = N / 1024.0
-R_CORNER = int(0.219 * N)                 # favicon-like 14/64 radius
+R_CORNER = int(0.219 * N)
 BORDER_W = int(6 * S)
-W = int(90 * S)                           # monogram stroke width
 
-APEX = (468, 284)                         # Æ top junction
-DIAG_END = (240, 740)                     # A left leg, bottom-left
-STEM_END = (468, 740)                     # shared vertical stem, bottom
-TOP_END = (764, 284)                      # E top arm
-BOT_END = (764, 740)                      # E bottom arm
-PINK_A = (552, 512)                       # detached middle dash (the pink stroke)
-PINK_B = (712, 512)
+HANDLE_W = 104                       # handle stroke width (dominant body)
+HANDLE_A = (272, 600)
+HANDLE_B = (752, 600)
+
+BLADE_ROOT_W = 88                    # blade width at pivot (slimmer than handle)
+BLADE_TIP_W = 28                     # tapered tip
+PIVOT = (312, 600)                   # blade hinge at handle's left end
+TIP = (640, 380)                     # shallow ~34° unfold, shorter than handle
 
 
 def _pt(p):
     return (p[0] * S, p[1] * S)
 
 
-def diag_gradient(c1, c2) -> Image.Image:
-    ys, xs = np.mgrid[0:N, 0:N]
-    t = (xs + ys) / (2 * (N - 1))
-    arr = np.empty((N, N, 4), dtype=np.uint8)
-    for i in range(3):
-        arr[:, :, i] = c1[i] * (1 - t) + c2[i] * t
-    arr[:, :, 3] = 255
-    return Image.fromarray(arr, "RGBA")
-
-
-def stroke_mask(draw_pairs, width) -> Image.Image:
-    """Lines with rounded caps, drawn white on black."""
-    mask = Image.new("L", (N, N), 0)
-    d = ImageDraw.Draw(mask)
-    r = width / 2
-    for a, b in draw_pairs:
-        a, b = _pt(a), _pt(b)
-        d.line([a, b], fill=255, width=width)
-        for p in (a, b):
-            d.ellipse([p[0] - r, p[1] - r, p[0] + r, p[1] + r], fill=255)
-    return mask
-
-
 def render_master() -> Image.Image:
     canvas = Image.new("RGBA", (N, N), (0, 0, 0, 0))
 
-    # 1) near-black rounded square
+    # 1) flat near-black rounded square (Vercel: no gloss, no tint)
     bg_mask = Image.new("L", (N, N), 0)
     ImageDraw.Draw(bg_mask).rounded_rectangle([0, 0, N - 1, N - 1], R_CORNER, fill=255)
     canvas = Image.composite(Image.new("RGBA", (N, N), BG + (255,)), canvas, bg_mask)
 
-    # 2) faint diagonal purple tint for depth
-    ys, xs = np.mgrid[0:N, 0:N]
-    t = (xs + ys) / (2 * (N - 1))
-    tint = np.zeros((N, N, 4), dtype=np.uint8)
-    tint[:, :, 0], tint[:, :, 1], tint[:, :, 2] = 124, 108, 240
-    tint[:, :, 3] = (30 * (1 - t)).astype(np.uint8)
-    canvas = Image.alpha_composite(
-        canvas, Image.composite(Image.fromarray(tint, "RGBA"),
-                                Image.new("RGBA", (N, N), (0, 0, 0, 0)), bg_mask)
-    )
-
     d = ImageDraw.Draw(canvas)
 
-    # 3) hairline border
+    # 2) hairline border
     o = BORDER_W / 2
     d.rounded_rectangle([o, o, N - 1 - o, N - 1 - o], R_CORNER - int(o),
                         outline=BORDER + (255,), width=BORDER_W)
 
-    # 4) Æ body in purple gradient: left leg, stem, top arm, bottom arm
-    purple_mask = stroke_mask(
-        [(DIAG_END, APEX), (APEX, STEM_END), (APEX, TOP_END), (STEM_END, BOT_END)],
-        W,
-    )
-    purple = Image.composite(diag_gradient(PURPLE_A, PURPLE_B),
-                             Image.new("RGBA", (N, N), (0, 0, 0, 0)), purple_mask)
-    canvas = Image.alpha_composite(canvas, purple)
+    # 3) white handle bar, rounded caps
+    a, b = _pt(HANDLE_A), _pt(HANDLE_B)
+    r = HANDLE_W * S / 2
+    d.line([a, b], fill=WHITE + (255,), width=int(HANDLE_W * S))
+    d.ellipse([a[0] - r, a[1] - r, a[0] + r, a[1] + r], fill=WHITE + (255,))
+    d.ellipse([b[0] - r, b[1] - r, b[0] + r, b[1] + r], fill=WHITE + (255,))
 
-    # 5) THE pink stroke — detached middle dash with vertical pink gradient
-    pink_mask = stroke_mask([(PINK_A, PINK_B)], W)
-    y0, y1 = int(_pt(PINK_A)[1] - W / 2), int(_pt(PINK_A)[1] + W / 2)
+    # 4) pink tapered blade unfolding from the handle
+    dx, dy = TIP[0] - PIVOT[0], TIP[1] - PIVOT[1]
+    length = math.hypot(dx, dy)
+    ux, uy = dx / length, dy / length          # blade direction
+    px, py = -uy, ux                           # perpendicular
+    rw, tw = BLADE_ROOT_W / 2, BLADE_TIP_W / 2
+    p1 = (PIVOT[0] + px * rw, PIVOT[1] + py * rw)
+    p2 = (TIP[0] + px * tw, TIP[1] + py * tw)
+    p3 = (TIP[0] - px * tw, TIP[1] - py * tw)
+    p4 = (PIVOT[0] - px * rw, PIVOT[1] - py * rw)
+
+    blade_mask = Image.new("L", (N, N), 0)
+    bd = ImageDraw.Draw(blade_mask)
+    bd.polygon([_pt(p1), _pt(p2), _pt(p3), _pt(p4)], fill=255)
+    rp, rt = rw * S, tw * S
+    pv, tp = _pt(PIVOT), _pt(TIP)
+    bd.ellipse([pv[0] - rp, pv[1] - rp, pv[0] + rp, pv[1] + rp], fill=255)  # hinge rivet
+    bd.ellipse([tp[0] - rt, tp[1] - rt, tp[0] + rt, tp[1] + rt], fill=255)  # rounded tip
+
+    y0, y1 = int(_pt(TIP)[1] - rt), int(_pt(PIVOT)[1] + rp)
     tv = np.clip((np.arange(y0, y1) - y0) / max(y1 - y0 - 1, 1), 0, 1)
     band = np.zeros((y1 - y0, N, 4), dtype=np.uint8)
     for i in range(3):
@@ -113,7 +94,7 @@ def render_master() -> Image.Image:
     pink_img = Image.new("RGBA", (N, N), (0, 0, 0, 0))
     pink_img.paste(Image.fromarray(band, "RGBA"), (0, y0))
     canvas = Image.alpha_composite(
-        canvas, Image.composite(pink_img, Image.new("RGBA", (N, N), (0, 0, 0, 0)), pink_mask)
+        canvas, Image.composite(pink_img, Image.new("RGBA", (N, N), (0, 0, 0, 0)), blade_mask)
     )
     return canvas
 
