@@ -297,7 +297,7 @@ export function ProcessesView() {
 
       {/* Details dialog */}
       <Dialog open={detail !== null} onOpenChange={(o) => !o && setDetail(null)}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle className="font-mono text-sm">
               {detail?.name} · {detail?.pid}
