@@ -1,42 +1,19 @@
-import {
-  MoreHorizontal,
-  Pencil,
-  Play,
-  RotateCcw,
-  Copy,
-  Square,
-  SquareTerminal,
-  Trash2,
-  ExternalLink,
-} from "lucide-react";
+import { ExternalLink } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { AppActionButtons } from "@/components/apps/app-action-buttons";
+import { AppActionsMenu } from "@/components/apps/app-actions-menu";
 import { ShellBadge } from "@/components/shared/shell-badge";
 import { StatusPill } from "@/components/shared/status-pill";
 import { fmt } from "@/i18n/locales";
 import { useT } from "@/i18n/use-t";
 import { openUrl } from "@/lib/pty";
+import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/use-app-store";
 import type { AppConfig } from "@/types";
-import { cn } from "@/lib/utils";
 
 export function AppCard({ app }: { app: AppConfig }) {
   const t = useT();
   const session = useAppStore((s) => s.sessions[app.id]);
-  const startApp = useAppStore((s) => s.startApp);
-  const stopApp = useAppStore((s) => s.stopApp);
-  const restartApp = useAppStore((s) => s.restartApp);
-  const openTerminal = useAppStore((s) => s.openTerminal);
-  const openEditor = useAppStore((s) => s.openEditor);
-  const cloneApp = useAppStore((s) => s.cloneApp);
-  const requestDelete = useAppStore((s) => s.requestDelete);
 
   const running = session?.state === "running";
   const exited = session?.state === "exited";
@@ -61,39 +38,7 @@ export function AppCard({ app }: { app: AppConfig }) {
           {app.name}
         </h3>
         <ShellBadge kind={app.shell} />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-6 text-[#666] opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
-            >
-              <MoreHorizontal className="size-3.5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-40">
-            {running && (
-              <>
-                <DropdownMenuItem onClick={() => void stopApp(app.id)}>
-                  <Square className="size-3.5" /> {t.card.stop}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => void restartApp(app.id)}>
-                  <RotateCcw className="size-3.5" /> {t.card.restart}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => cloneApp(app)}>
-              <Copy className="size-3.5" /> {t.card.clone}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-              </>
-            )}
-            <DropdownMenuItem onClick={() => openEditor(app)}>
-              <Pencil className="size-3.5" /> {t.card.edit}
-            </DropdownMenuItem>
-            <DropdownMenuItem variant="destructive" onClick={() => requestDelete(app)}>
-              <Trash2 className="size-3.5" /> {t.card.delete}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <AppActionsMenu app={app} />
       </div>
 
       {/* Row 2 — status line */}
@@ -173,73 +118,7 @@ export function AppCard({ app }: { app: AppConfig }) {
 
       {/* Row 4 — actions */}
       <div className="flex items-center gap-2 border-t border-border px-4 py-2.5">
-        {app.kind === "script" ? (
-          running ? (
-            <>
-              <Button
-                size="sm"
-                className="h-7 gap-1.5 px-2.5 text-xs"
-                onClick={() => void openTerminal(app.id)}
-              >
-                <SquareTerminal className="size-3.5" /> {t.card.viewOutput}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 px-2.5 text-xs text-[#a1a1a1]"
-                onClick={() => void stopApp(app.id)}
-              >
-                {t.card.stop}
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button size="sm" className="h-7 gap-1.5 px-2.5 text-xs" onClick={() => void startApp(app.id)}>
-                <Play className="size-3" /> {exited ? t.card.rerun : t.card.run}
-              </Button>
-              {exited && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 gap-1.5 px-2.5 text-xs text-[#a1a1a1]"
-                  onClick={() => void openTerminal(app.id)}
-                >
-                  {t.card.viewOutput}
-                </Button>
-              )}
-            </>
-          )
-        ) : running ? (
-          <>
-            <Button size="sm" className="h-7 gap-1.5 px-2.5 text-xs" onClick={() => void openTerminal(app.id)}>
-              <SquareTerminal className="size-3.5" /> {t.card.openTerminal}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 px-2.5 text-xs text-[#a1a1a1]"
-              onClick={() => void stopApp(app.id)}
-            >
-              {t.card.stop}
-            </Button>
-          </>
-        ) : (
-          <>
-            <Button size="sm" className="h-7 gap-1.5 px-2.5 text-xs" onClick={() => void startApp(app.id)}>
-              <Play className="size-3" /> {exited ? t.card.restart : t.card.start}
-            </Button>
-            {exited && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 gap-1.5 px-2.5 text-xs text-[#a1a1a1]"
-                onClick={() => void openTerminal(app.id)}
-              >
-                {t.card.viewOutput}
-              </Button>
-            )}
-          </>
-        )}
+        <AppActionButtons app={app} />
         {app.autoStart && (
           <span className="ml-auto font-mono text-[10.5px] text-[#525252]">{t.card.auto}</span>
         )}

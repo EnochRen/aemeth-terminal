@@ -1,18 +1,13 @@
 import { useMemo, useState } from "react";
-import { LayoutGrid, List, Play, MoreHorizontal, Pencil, Square, SquareTerminal, Trash2, RotateCcw, Loader2 } from "lucide-react";
+import { LayoutGrid, List, Play, Square, Loader2 } from "lucide-react";
 
+import { AppActionButtons } from "@/components/apps/app-action-buttons";
+import { AppActionsMenu } from "@/components/apps/app-actions-menu";
 import { AppCard } from "@/components/apps/app-card";
 import { ShellBadge } from "@/components/shared/shell-badge";
 import { StatusPill, StatusDot } from "@/components/shared/status-pill";
 import { Button } from "@/components/ui/button";
 import { openUrl } from "@/lib/pty";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { fmt } from "@/i18n/locales";
 import { useT } from "@/i18n/use-t";
 import { cn } from "@/lib/utils";
@@ -188,15 +183,9 @@ function AppTable({
   sessions: Record<string, SessionStatus>;
 }) {
   const t = useT();
-  const startApp = useAppStore((s) => s.startApp);
-  const stopApp = useAppStore((s) => s.stopApp);
-  const openTerminal = useAppStore((s) => s.openTerminal);
-  const openEditor = useAppStore((s) => s.openEditor);
-  const requestDelete = useAppStore((s) => s.requestDelete);
-  const restartApp = useAppStore((s) => s.restartApp);
 
   return (
-    <div className="min-w-0 overflow-auto">
+    <div className="min-w-0 overflow-auto p-px">
       <table className="w-full border-collapse font-mono text-[11.5px]">
         <thead className="sticky top-0 z-10 bg-background">
           <tr className="border-b border-border text-left text-[10.5px] text-[#666]">
@@ -294,118 +283,8 @@ function AppTable({
                 {/* Actions */}
                 <td className="px-2 py-1.5 pr-5">
                   <div className="flex items-center justify-end gap-1">
-                    {isScript ? (
-                      <>
-                        {running ? (
-                          <>
-                            <Button
-                              size="sm"
-                              className="h-6 gap-1 px-2 text-[10px]"
-                              onClick={() => void openTerminal(app.id)}
-                            >
-                              <SquareTerminal className="size-3" /> {t.card.viewOutput}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-6 px-2 text-[10px] text-[#a1a1a1]"
-                              onClick={() => void stopApp(app.id)}
-                            >
-                              {t.card.stop}
-                            </Button>
-                          </>
-                        ) : (
-                          <>
-                            <Button
-                              size="sm"
-                              className="h-6 gap-1 px-2 text-[10px]"
-                              onClick={() => void startApp(app.id)}
-                            >
-                              <Play className="size-3" /> {exited ? t.card.rerun : t.card.run}
-                            </Button>
-                            {exited && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-6 gap-1 px-2 text-[10px] text-[#a1a1a1]"
-                                onClick={() => void openTerminal(app.id)}
-                              >
-                                {t.card.viewOutput}
-                              </Button>
-                            )}
-                          </>
-                        )}
-                      </>
-                    ) : running ? (
-                      <>
-                        <Button
-                          size="sm"
-                          className="h-6 gap-1 px-2 text-[10px]"
-                          onClick={() => void openTerminal(app.id)}
-                        >
-                          <SquareTerminal className="size-3" /> {t.card.openTerminal}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-6 px-2 text-[10px] text-[#a1a1a1]"
-                          onClick={() => void stopApp(app.id)}
-                        >
-                          {t.card.stop}
-                        </Button>
-                      </>
-                    ) : (
-                      <>
-                        <Button
-                          size="sm"
-                          className="h-6 gap-1 px-2 text-[10px]"
-                          onClick={() => void startApp(app.id)}
-                        >
-                          <Play className="size-3" /> {exited ? t.card.restart : t.card.start}
-                        </Button>
-                        {exited && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-6 gap-1 px-2 text-[10px] text-[#a1a1a1]"
-                            onClick={() => void openTerminal(app.id)}
-                          >
-                            {t.card.viewOutput}
-                          </Button>
-                        )}
-                      </>
-                    )}
-
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="size-6 text-[#666] hover:text-foreground"
-                        >
-                          <MoreHorizontal className="size-3.5" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-40">
-                        {running && (
-                          <>
-                            <DropdownMenuItem onClick={() => void stopApp(app.id)}>
-                              <Square className="size-3.5" /> {t.card.stop}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => void restartApp(app.id)}>
-                              <RotateCcw className="size-3.5" /> {t.card.restart}
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                          </>
-                        )}
-                        <DropdownMenuItem onClick={() => openEditor(app)}>
-                          <Pencil className="size-3.5" /> {t.card.edit}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem variant="destructive" onClick={() => requestDelete(app)}>
-                          <Trash2 className="size-3.5" /> {t.card.delete}
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    <AppActionButtons app={app} size="sm" />
+                    <AppActionsMenu app={app} className="opacity-100" />
                   </div>
                 </td>
               </tr>
