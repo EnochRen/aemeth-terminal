@@ -55,6 +55,17 @@ fn lock_system() -> std::sync::MutexGuard<'static, Option<System>> {
     SYSTEM.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Number of logical CPU cores, cached once.
+fn cpu_cores() -> f32 {
+    use std::sync::OnceLock;
+    static CORES: OnceLock<f32> = OnceLock::new();
+    *CORES.get_or_init(|| {
+        // Use a fresh System to query CPU count so we don't deadlock
+        // with the caller that already holds the SYSTEM mutex.
+        System::new_all().cpus().len() as f32
+    })
+}
+
 /// Snapshot of all processes, sorted by pid.
 pub fn snapshot() -> Vec<ProcessInfo> {
     let mut slot = lock_system();
@@ -85,7 +96,7 @@ pub fn snapshot() -> Vec<ProcessInfo> {
                 .join(" "),
             exe: p.exe().map(|e| e.to_string_lossy().into_owned()),
             memory: p.memory(),
-            cpu: p.cpu_usage(),
+            cpu: p.cpu_usage() / cpu_cores(),
             start_time: p.start_time(),
             ports: listeners.get(&pid.as_u32()).cloned().unwrap_or_default(),
         })
@@ -119,7 +130,7 @@ pub fn detail(pid: u32) -> Option<ProcessDetail> {
             .join(" "),
         exe: p.exe().map(|e| e.to_string_lossy().into_owned()),
         memory: p.memory(),
-        cpu: p.cpu_usage(),
+        cpu: p.cpu_usage() / cpu_cores(),
         start_time: p.start_time(),
         ports: listeners.get(&pid).cloned().unwrap_or_default(),
         threads: None,
