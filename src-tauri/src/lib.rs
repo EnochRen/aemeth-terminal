@@ -107,6 +107,12 @@ async fn shutdown_sessions(manager: tauri::State<'_, PtyManager>) -> Result<(), 
     Ok(())
 }
 
+/// Open a URL in the default system browser.
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    open::that(&url).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let manager = PtyManager::new();
@@ -128,7 +134,8 @@ pub fn run() {
             process_kill,
             process_detail,
             close_force,
-            shutdown_sessions
+            shutdown_sessions,
+            open_url
         ])
         // Native close guard. If a JS `onCloseRequested` listener were
         // registered instead, Tauri would unconditionally veto the native

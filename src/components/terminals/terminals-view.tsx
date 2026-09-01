@@ -8,6 +8,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import React from "react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { StatusDot } from "@/components/shared/status-pill";
 import { TerminalPane } from "@/components/terminals/terminal-pane";
@@ -17,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { sessionRegistry } from "@/lib/session-registry";
 import { useAppStore } from "@/store/use-app-store";
 import type { AppConfig } from "@/types";
+import { openUrl } from "@/lib/pty";
 
 export function TerminalsView() {
   const t = useT();
@@ -59,8 +61,20 @@ export function TerminalsView() {
               {activeSession.shell}
               {activeSession.pid ? ` · pid ${activeSession.pid}` : ""}
               {(activeSession.ports?.length ?? 0) > 0
-                ? ` · ${activeSession.ports!.map((p) => `:${p}`).join(" ")}`
-                : ""}
+                ? activeSession.ports!.map((p, i) => (
+                    <React.Fragment key={p}>
+                      {i > 0 && " · "}
+                      <button
+                        type="button"
+                        onClick={() => void openUrl(`http://localhost:${p}`)}
+                        className="inline-flex items-center gap-0.5 rounded px-0.5 hover:bg-accent transition-colors"
+                        title={`Open http://localhost:${p}`}
+                      >
+                        :{p}
+                      </button>
+                    </React.Fragment>
+                  ))
+                : null}
             </span>
           )}
           <DropdownMenu>
