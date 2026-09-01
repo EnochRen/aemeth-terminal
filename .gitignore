@@ -18,3 +18,6 @@ dist-ssr
 *.log
 npm-debug.log*
 pnpm-debug.log*
+
+# Build info
+*.tsbuildinfo
