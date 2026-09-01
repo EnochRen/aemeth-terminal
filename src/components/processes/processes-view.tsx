@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Info, RefreshCw, Search, Square, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -26,6 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Sparkline } from "@/components/shared/sparkline";
 import { fmt } from "@/i18n/locales";
 import { useT } from "@/i18n/use-t";
 import { processKill, processList } from "@/lib/proc";
@@ -36,6 +37,7 @@ type Field = "all" | "name" | "pid" | "port" | "args";
 type SortKey = "name" | "pid" | "memory" | "cpu" | "start";
 
 const POLL_MS = 2000;
+const MAX_SAMPLES = 30; // 60 seconds at 2 s intervals
 
 function fmtMem(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -64,9 +66,33 @@ export function ProcessesView() {
   const [detail, setDetail] = useState<ProcessInfo | null>(null);
   const [killTarget, setKillTarget] = useState<ProcessInfo | null>(null);
 
+  // Ring buffers for sparkline data: pid → {cpu[], mem[]}
+  const historyRef = useRef<Map<number, { cpu: number[]; mem: number[] }>>(new Map());
+
   const refresh = useCallback(async () => {
     try {
-      setProcs(await processList());
+      const list = await processList();
+      setProcs(list);
+
+      // Append new samples to the ring buffer.
+      const h = historyRef.current;
+      const live = new Set<number>();
+      for (const p of list) {
+        live.add(p.pid);
+        let entry = h.get(p.pid);
+        if (!entry) {
+          entry = { cpu: [], mem: [] };
+          h.set(p.pid, entry);
+        }
+        if (entry.cpu.length >= MAX_SAMPLES) entry.cpu.shift();
+        if (entry.mem.length >= MAX_SAMPLES) entry.mem.shift();
+        entry.cpu.push(p.cpu);
+        entry.mem.push(p.memory);
+      }
+      // Drop dead entries.
+      for (const pid of h.keys()) {
+        if (!live.has(pid)) h.delete(pid);
+      }
     } catch {
       /* backend busy */
     }
@@ -287,8 +313,24 @@ export function ProcessesView() {
                   ? detail.ports.map((x) => `:${x}`).join(" ")
                   : "—"}
               </Row>
-              <Row label={t.proc.memory}>{fmtMem(detail.memory)}</Row>
-              <Row label={t.proc.cpu}>{detail.cpu.toFixed(1)}%</Row>
+              <Row label={t.proc.memory}>
+                {fmtMem(detail.memory)}
+                <Sparkline
+                  data={historyRef.current.get(detail.pid)?.mem ?? []}
+                  stroke="#30a46c"
+                  fill="rgba(48,164,108,0.15)"
+                  className="ml-3 inline-block align-middle"
+                />
+              </Row>
+              <Row label={t.proc.cpu}>
+                {detail.cpu.toFixed(1)}%
+                <Sparkline
+                  data={historyRef.current.get(detail.pid)?.cpu ?? []}
+                  stroke="#ffb224"
+                  fill="rgba(255,178,36,0.15)"
+                  className="ml-3 inline-block align-middle"
+                />
+              </Row>
               <Row label={t.proc.started}>{fmtTime(detail.startTime)}</Row>
             </div>
           )}

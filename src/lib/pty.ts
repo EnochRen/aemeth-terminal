@@ -8,6 +8,7 @@ import type { AppConfig, SessionStatus, ShellInfo } from "@/types";
 export const PTY_OUTPUT_EVENT = "pty://output";
 export const PTY_EXIT_EVENT = "pty://exit";
 export const PTY_PORTS_EVENT = "pty://ports";
+export const HEALTH_EVENT = "aemeth://health";
 export const CLOSE_BLOCKED_EVENT = "aemeth://close-blocked";
 
 export interface PtyOutputPayload {
@@ -22,14 +23,23 @@ export interface PtyPortsPayload {
   ports: number[];
 }
 
+export interface HealthPayload {
+  sessionId: string;
+  appId: string;
+  healthy: boolean;
+}
+
 /** Spec sent to the backend when launching a session. */
 export interface StartSpec {
   appId: string;
   name: string;
+  kind: AppConfig["kind"];
   shell: AppConfig["shell"];
   cwd: string | null;
   startupDelayMs: number;
   commands: { command: string; delayMs: number }[];
+  envVars?: Record<string, string>;
+  healthCheckUrl?: string;
 }
 
 export function ptyStart(spec: StartSpec): Promise<SessionStatus> {
@@ -79,6 +89,10 @@ export function listenPtyExit(handler: (payload: SessionStatus) => void): Promis
 
 export function listenPtyPorts(handler: (payload: PtyPortsPayload) => void): Promise<UnlistenFn> {
   return listen<PtyPortsPayload>(PTY_PORTS_EVENT, (e) => handler(e.payload));
+}
+
+export function listenHealth(handler: (payload: HealthPayload) => void): Promise<UnlistenFn> {
+  return listen<HealthPayload>(HEALTH_EVENT, (e) => handler(e.payload));
 }
 
 /* ------------------------------------------------------------------ */

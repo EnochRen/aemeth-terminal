@@ -25,8 +25,16 @@ export interface AppConfig {
   commands: PresetCommand[];
   /** Milliseconds to wait for the shell prompt before sending preset commands. */
   startupDelayMs: number;
+  /** Tags used to group apps together (workspace). */
+  tags?: string[];
+  /** Health‑check URL (any 2xx response is considered healthy). */
+  healthCheckUrl?: string;
+  /** Application kind — long-lived service or fire-and-forget script. */
+  kind: "service" | "script";
   /** Launch automatically when Aemeth starts. */
   autoStart: boolean;
+  /** Environment variables injected into the shell. */
+  envVars?: Record<string, string>;
   /** Accent color used for the app avatar & status accents. */
   color: string;
   sortOrder: number;
@@ -47,6 +55,10 @@ export interface SessionStatus {
   pid?: number;
   /** TCP ports the session's process tree listens on (live-updated). */
   ports?: number[];
+  /** Whether the last health‑check passed (undefined = no check configured). */
+  healthy?: boolean;
+  /** Runtime duration in ms (set on exit for script-type apps). */
+  durationMs?: number;
   startedAt: number;
 }
 

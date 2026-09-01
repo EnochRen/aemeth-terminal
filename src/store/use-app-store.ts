@@ -112,13 +112,26 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
     await sessionRegistry.init();
     sessionRegistry.onStatus((appId, status) => {
-      set((s) => ({ sessions: { ...s.sessions, [appId]: status } }));
+      set((s) => {
+        const app = s.apps.find((a) => a.id === appId);
+        if (app?.kind === "script" && status.state === "exited") {
+          status = { ...status, durationMs: Date.now() - status.startedAt };
+        }
+        return { sessions: { ...s.sessions, [appId]: status } };
+      });
     });
     sessionRegistry.onPorts((appId, ports) => {
       set((s) => {
         const current = s.sessions[appId];
         if (!current) return {};
         return { sessions: { ...s.sessions, [appId]: { ...current, ports } } };
+      });
+    });
+    sessionRegistry.onHealth((appId, healthy) => {
+      set((s) => {
+        const current = s.sessions[appId];
+        if (!current) return {};
+        return { sessions: { ...s.sessions, [appId]: { ...current, healthy } } };
       });
     });
 
@@ -133,9 +146,10 @@ export const useAppStore = create<AppState>()((set, get) => ({
       fontSize: settings.terminalFontSize,
       scrollback: settings.scrollback,
     });
-    const apps = ((await store.get<AppConfig[]>(APPS_KEY)) ?? []).sort(
-      (a, b) => a.sortOrder - b.sortOrder || a.createdAt - b.createdAt,
-    );
+    const apps = ((await store.get<AppConfig[]>(APPS_KEY)) ?? []).map((a) => ({
+      ...a,
+      kind: a.kind ?? "service",
+    })).sort((a, b) => a.sortOrder - b.sortOrder || a.createdAt - b.createdAt);
     const shells = await shellsDetect().catch(() => [] as ShellInfo[]);
     set({ apps, shells, hydrated: true, locale, settings });
 

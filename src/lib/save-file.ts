@@ -2,6 +2,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 
 /**
+ * Read a UTF-8 text file at the given path.
+ */
+export async function readTextFile(path: string): Promise<string> {
+  return invoke("read_text_file", { path });
+}
+
+/**
  * Ask the user for a file path and write `content` to it as UTF-8 text.
  * Returns the chosen path, or null when the dialog was cancelled.
  */

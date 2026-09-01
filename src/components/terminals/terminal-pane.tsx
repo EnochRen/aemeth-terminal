@@ -44,6 +44,7 @@ export function TerminalPane({ appId, active }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const client = sessionRegistry.getByApp(appId);
   const session = useAppStore((s) => s.sessions[appId]);
+  const app = useAppStore((s) => s.apps.find((a) => a.id === appId));
   const restartApp = useAppStore((s) => s.restartApp);
   const closeTab = useAppStore((s) => s.closeTab);
 
@@ -149,8 +150,13 @@ export function TerminalPane({ appId, active }: TerminalPaneProps) {
         <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center">
           <div className="pointer-events-auto flex items-center gap-3 rounded-md border border-border bg-[#0a0a0a] px-3 py-1.5">
             <span className="font-mono text-[11px] text-[#a1a1a1]">
-              {t.pane.exited}
-              {session.exitCode !== undefined ? ` · ${fmt(t.pane.code, { code: session.exitCode })}` : ""}
+              {app?.kind === "script" ? t.pane.done : t.pane.exited}
+              {session.exitCode !== undefined
+                ? ` · ${fmt(t.pane.code, { code: session.exitCode })}`
+                : ""}
+              {session.durationMs !== undefined
+                ? ` · ${fmt(t.pane.duration, { t: (session.durationMs / 1000).toFixed(1) })}`
+                : ""}
             </span>
             <span className="h-3 w-px bg-border" />
             <button
@@ -158,7 +164,7 @@ export function TerminalPane({ appId, active }: TerminalPaneProps) {
               onClick={() => void restartApp(appId)}
               className="font-mono text-[11px] text-foreground underline decoration-[#333] underline-offset-4 hover:decoration-foreground"
             >
-              {t.pane.restart}
+              {app?.kind === "script" ? t.pane.rerun : t.pane.restart}
             </button>
             <button
               type="button"

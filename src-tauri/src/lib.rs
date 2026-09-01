@@ -1,3 +1,4 @@
+mod health;
 mod ports;
 mod procs;
 mod pty;
@@ -65,6 +66,11 @@ fn write_text_file(path: String, content: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn read_text_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn process_list() -> Vec<procs::ProcessInfo> {
     procs::snapshot()
 }
@@ -99,6 +105,7 @@ pub fn run() {
             pty_list,
             shells_detect,
             write_text_file,
+            read_text_file,
             process_list,
             process_kill,
             close_force

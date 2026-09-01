@@ -95,7 +95,18 @@ export function AppCard({ app }: { app: AppConfig }) {
 
       {/* Row 2 — status line */}
       <div className="flex items-center justify-between px-4 pb-3 pt-1.5">
-        <StatusPill session={session} />
+        <div className="flex items-center gap-1.5">
+          <StatusPill session={session} />
+          {running && session?.healthy !== undefined && (
+            <span
+              className={cn(
+                "size-1.5 rounded-full",
+                session!.healthy ? "bg-state-running" : "bg-state-error",
+              )}
+              title={session!.healthy ? t.status.healthy : t.status.unhealthy}
+            />
+          )}
+        </div>
         {running && (session?.pid !== undefined || (session.ports?.length ?? 0) > 0) && (
           <span className="flex items-center gap-2 font-mono text-[10.5px] text-[#666]">
             {(session.ports?.length ?? 0) > 0 && (
@@ -104,6 +115,14 @@ export function AppCard({ app }: { app: AppConfig }) {
               </span>
             )}
             {session.pid !== undefined && <span>{fmt(t.card.pid, { pid: session.pid })}</span>}
+          </span>
+        )}
+        {exited && app.kind === "script" && session && (
+          <span className="font-mono text-[10.5px] text-[#666]">
+            code {session.exitCode ?? 0}
+            {session.durationMs !== undefined && (
+              <> · {fmt(t.card.duration, { t: (session.durationMs / 1000).toFixed(1) })}</>
+            )}
           </span>
         )}
       </div>
@@ -125,7 +144,7 @@ export function AppCard({ app }: { app: AppConfig }) {
             </div>
           ))
         ) : (
-          <div className="font-mono text-[11.5px] text-[#525252]">{t.card.interactive}</div>
+          <div className="font-mono text-[11.5px] text-[#525252]">{app.kind === "script" ? t.card.script : t.card.interactive}</div>
         )}
         {app.commands.length > 2 && (
           <div className="pt-0.5 font-mono text-[10.5px] text-[#525252]">
@@ -136,7 +155,43 @@ export function AppCard({ app }: { app: AppConfig }) {
 
       {/* Row 4 — actions */}
       <div className="flex items-center gap-2 border-t border-border px-4 py-2.5">
-        {running ? (
+        {app.kind === "script" ? (
+          running ? (
+            <>
+              <Button
+                size="sm"
+                className="h-7 gap-1.5 px-2.5 text-xs"
+                onClick={() => void openTerminal(app.id)}
+              >
+                <SquareTerminal className="size-3.5" /> {t.card.viewOutput}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2.5 text-xs text-[#a1a1a1]"
+                onClick={() => void stopApp(app.id)}
+              >
+                {t.card.stop}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button size="sm" className="h-7 gap-1.5 px-2.5 text-xs" onClick={() => void startApp(app.id)}>
+                <Play className="size-3" /> {exited ? t.card.rerun : t.card.run}
+              </Button>
+              {exited && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 gap-1.5 px-2.5 text-xs text-[#a1a1a1]"
+                  onClick={() => void openTerminal(app.id)}
+                >
+                  {t.card.viewOutput}
+                </Button>
+              )}
+            </>
+          )
+        ) : running ? (
           <>
             <Button size="sm" className="h-7 gap-1.5 px-2.5 text-xs" onClick={() => void openTerminal(app.id)}>
               <SquareTerminal className="size-3.5" /> {t.card.openTerminal}

@@ -18,6 +18,7 @@ import "@xterm/xterm/css/xterm.css";
 
 import {
   base64ToBytes,
+  listenHealth,
   listenPtyExit,
   listenPtyOutput,
   listenPtyPorts,
@@ -270,12 +271,14 @@ function concatBytes(chunks: Uint8Array[]): Uint8Array {
 
 export type StatusListener = (appId: string, status: SessionStatus) => void;
 export type PortsListener = (appId: string, ports: number[]) => void;
+export type HealthListener = (appId: string, healthy: boolean) => void;
 
 class SessionRegistry {
   private clients = new Map<string, SessionClient>(); // sessionId -> client
   private appToSession = new Map<string, string>(); // appId -> sessionId
   private statusListeners = new Set<StatusListener>();
   private portsListeners = new Set<PortsListener>();
+  private healthListeners = new Set<HealthListener>();
   private starting = new Set<string>();
   private initialized = false;
 
@@ -317,6 +320,12 @@ class SessionRegistry {
       client.status = { ...client.status, ports };
       for (const listener of this.portsListeners) listener(client.app.id, ports);
     });
+    await listenHealth(({ appId, healthy }) => {
+      const client = this.getByApp(appId);
+      if (!client) return;
+      client.status = { ...client.status, healthy };
+      for (const listener of this.healthListeners) listener(appId, healthy);
+    });
   }
 
   onStatus(listener: StatusListener): () => void {
@@ -327,6 +336,11 @@ class SessionRegistry {
   onPorts(listener: PortsListener): () => void {
     this.portsListeners.add(listener);
     return () => this.portsListeners.delete(listener);
+  }
+
+  onHealth(listener: HealthListener): () => void {
+    this.healthListeners.add(listener);
+    return () => this.healthListeners.delete(listener);
   }
 
   private emitStatus(appId: string, status: SessionStatus): void {
@@ -348,10 +362,13 @@ class SessionRegistry {
       const status = await ptyStart({
         appId: app.id,
         name: app.name,
+        kind: app.kind,
+        healthCheckUrl: app.healthCheckUrl,
         shell: app.shell,
         cwd: app.cwd,
         startupDelayMs: app.startupDelayMs,
         commands: app.commands,
+        envVars: app.envVars,
       });
 
       // Reap a stale exited client for this app, if any.

@@ -61,6 +61,19 @@ pub struct AppSpec {
     pub startup_delay_ms: u64,
     #[serde(default)]
     pub commands: Vec<PresetCommand>,
+    /// Application kind ("service" | "script").
+    #[serde(default = "default_kind")]
+    pub app_kind: String,
+    /// Environment variables injected into the shell.
+    #[serde(default)]
+    pub env_vars: Option<std::collections::HashMap<String, String>>,
+    /// Health‑check URL (GET, any 2xx response is considered healthy).
+    #[serde(default)]
+    pub health_check_url: Option<String>,
+}
+
+fn default_kind() -> String {
+    "service".into()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -113,6 +126,7 @@ struct SessionHandle {
     pid: Option<u32>,
     started_at: u64,
     alive: AtomicBool,
+    health_check_url: Option<String>,
 }
 
 #[derive(Default)]
@@ -120,6 +134,8 @@ struct ManagerInner {
     sessions: Mutex<HashMap<String, Arc<SessionHandle>>>,
     /// Last emitted ports per session, to suppress unchanged polls.
     ports: Mutex<HashMap<String, Vec<u16>>>,
+    /// Last health state per session.
+    health_last: Mutex<HashMap<String, bool>>,
     /// Set once the user confirms the close-guard dialog; the next
     /// `CloseRequested` event is let through without interception.
     force_close: AtomicBool,
@@ -130,6 +146,7 @@ struct ManagerInner {
 pub struct PtyManager {
     inner: Arc<ManagerInner>,
     ticker_started: Arc<AtomicBool>,
+    health_ticker_started: Arc<AtomicBool>,
 }
 
 fn now_ms() -> u64 {
@@ -189,6 +206,12 @@ impl PtyManager {
             }
         }
         cmd.env("AEMETH_APP", spec.name.as_str());
+        // User-configured environment variables.
+        if let Some(vars) = &spec.env_vars {
+            for (k, v) in vars.iter() {
+                cmd.env(k, v);
+            }
+        }
 
         let mut child = pair.slave.spawn_command(cmd)?;
         let pid = child.process_id();
@@ -219,6 +242,7 @@ impl PtyManager {
             pid,
             started_at,
             alive: AtomicBool::new(true),
+            health_check_url: spec.health_check_url.clone(),
         });
         self.inner
             .sessions
@@ -282,6 +306,7 @@ impl PtyManager {
         }
 
         self.ensure_ports_ticker(&app);
+        self.ensure_health_ticker(&app);
 
         // Preset command scheduler: types the configured lines into the shell.
         if !spec.commands.is_empty() {
@@ -457,6 +482,49 @@ impl PtyManager {
         }
         cache.retain(|id, _| alive.contains(id));
     }
+
+    fn ensure_health_ticker(&self, app: &AppHandle) {
+        if self.health_ticker_started.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let manager = self.clone();
+        let app = app.clone();
+        let _ = std::thread::Builder::new()
+            .name("health-check".into())
+            .spawn(move || {
+                let client = reqwest::blocking::Client::builder()
+                    .timeout(Duration::from_secs(5))
+                    .danger_accept_invalid_certs(true)
+                    .build()
+                    .expect("build reqwest client");
+                loop {
+                    std::thread::sleep(Duration::from_secs(15));
+                    crate::health::poll_sessions(
+                        &manager,
+                        &app,
+                        &client,
+                        &mut manager.inner.health_last.lock(),
+                    );
+                }
+            });
+    }
+}
+
+/// Snapshot of sessions for the health ticker.
+pub fn sessions_snapshot(manager: &PtyManager) -> Vec<(String, String, String)> {
+    manager
+        .inner
+        .sessions
+        .lock()
+        .iter()
+        .map(|(id, h)| {
+            (
+                id.clone(),
+                h.app_id.clone(),
+                h.health_check_url.clone().unwrap_or_default(),
+            )
+        })
+        .collect()
 }
 
 /// Kill the process tree rooted at `pid` (shell + anything it spawned).
