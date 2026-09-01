@@ -72,10 +72,10 @@ export class SessionClient {
       cursorStyle: "bar",
       fontFamily:
         '"Geist Mono Variable", "Cascadia Mono", Consolas, "Noto Sans SC Variable", "Microsoft YaHei", monospace',
-      fontSize: 13,
+      fontSize: sessionRegistry.terminalFontSize,
       lineHeight: 1.35,
       letterSpacing: 0,
-      scrollback: 10_000,
+      scrollback: sessionRegistry.scrollback,
       allowProposedApi: true,
       macOptionIsMeta: true,
       theme: XTERM_THEME,
@@ -89,6 +89,11 @@ export class SessionClient {
 
     this.term.onData((data) => this.queueInput(textEncoder.encode(data)));
     this.term.onBinary((b64) => this.queueInput(base64ToBytes(b64)));
+    this.term.onSelectionChange(() => {
+      if (!sessionRegistry.copyOnSelect) return;
+      const selection = this.term.getSelection();
+      if (selection) void navigator.clipboard.writeText(selection).catch(() => {});
+    });
   }
 
   get sessionId(): string {
@@ -174,6 +179,22 @@ class SessionRegistry {
   private statusListeners = new Set<StatusListener>();
   private starting = new Set<string>();
   private initialized = false;
+
+  /** Live terminal preferences, pushed by the settings store. */
+  terminalFontSize = 13;
+  scrollback = 10_000;
+  copyOnSelect = false;
+
+  /** Apply terminal options to every live session. */
+  applyTerminalOptions(opts: { fontSize?: number; scrollback?: number }): void {
+    if (opts.fontSize) this.terminalFontSize = opts.fontSize;
+    if (opts.scrollback) this.scrollback = opts.scrollback;
+    for (const client of this.clients.values()) {
+      if (opts.fontSize) client.term.options.fontSize = opts.fontSize;
+      if (opts.scrollback) client.term.options.scrollback = opts.scrollback;
+      client.fitNow();
+    }
+  }
 
   async init(): Promise<void> {
     if (this.initialized) return;

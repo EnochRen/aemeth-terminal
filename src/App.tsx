@@ -1,15 +1,29 @@
 import { useEffect } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { AppDialog } from "@/components/apps/app-dialog";
 import { AppsView } from "@/components/apps/apps-view";
 import { DeleteDialog } from "@/components/apps/delete-dialog";
 import { Sidebar } from "@/components/layout/sidebar";
 import { TitleBar } from "@/components/layout/title-bar";
+import { SettingsView } from "@/components/settings/settings-view";
 import { TerminalsView } from "@/components/terminals/terminals-view";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useShortcuts } from "@/hooks/use-shortcuts";
+import { fmt } from "@/i18n/locales";
 import { useT } from "@/i18n/use-t";
+import { forceCloseWindow, isCloseForced } from "@/lib/window-close";
 import { useAppStore } from "@/store/use-app-store";
 
 export default function App() {
@@ -18,6 +32,25 @@ export default function App() {
 
   useEffect(() => {
     void useAppStore.getState().hydrate();
+  }, []);
+
+  // Intercept window close while sessions are running.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    getCurrentWindow()
+      .onCloseRequested((event) => {
+        const s = useAppStore.getState();
+        const running = Object.values(s.sessions).filter((x) => x.state === "running").length;
+        if (!isCloseForced() && s.settings.confirmClose && running > 0) {
+          event.preventDefault();
+          s.setClosePrompt(true);
+        }
+      })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {});
+    return () => unlisten?.();
   }, []);
 
   useShortcuts();
@@ -33,8 +66,10 @@ export default function App() {
               <BootScreen />
             ) : view === "apps" ? (
               <AppsView />
-            ) : (
+            ) : view === "terminals" ? (
               <TerminalsView />
+            ) : (
+              <SettingsView />
             )}
           </main>
         </div>
@@ -42,8 +77,35 @@ export default function App() {
 
       <AppDialog />
       <DeleteDialog />
+      <CloseConfirmDialog />
       <Toaster richColors position="top-center" theme="dark" />
     </TooltipProvider>
+  );
+}
+
+function CloseConfirmDialog() {
+  const t = useT();
+  const open = useAppStore((s) => s.closePromptOpen);
+  const setClosePrompt = useAppStore((s) => s.setClosePrompt);
+  const running = useAppStore(
+    (s) => Object.values(s.sessions).filter((x) => x.state === "running").length,
+  );
+
+  return (
+    <AlertDialog open={open} onOpenChange={(o) => !o && setClosePrompt(false)}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{fmt(t.settings.closeTitle, { n: running })}</AlertDialogTitle>
+          <AlertDialogDescription>{t.settings.closeDesc}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t.settings.closeCancel}</AlertDialogCancel>
+          <AlertDialogAction onClick={() => void forceCloseWindow()}>
+            {t.settings.closeOk}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

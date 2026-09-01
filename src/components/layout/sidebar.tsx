@@ -1,12 +1,5 @@
-import { Check, Languages, LayoutGrid, Plus, SquareTerminal } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { LayoutGrid, Plus, Settings, SquareTerminal } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { LOCALES } from "@/i18n/locales";
 import { useT } from "@/i18n/use-t";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/use-app-store";
@@ -17,8 +10,6 @@ export function Sidebar() {
   const view = useAppStore((s) => s.view);
   const setView = useAppStore((s) => s.setView);
   const openEditor = useAppStore((s) => s.openEditor);
-  const locale = useAppStore((s) => s.locale);
-  const setLocale = useAppStore((s) => s.setLocale);
   const running = useAppStore(
     (s) => Object.values(s.sessions).filter((x) => x.state === "running").length,
   );
@@ -45,39 +36,15 @@ export function Sidebar() {
       </nav>
 
       <div className="mt-auto flex flex-col items-center gap-1">
-        {/* Language */}
-        <DropdownMenu>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className="flex size-9 items-center justify-center rounded-md text-[#a1a1a1] transition-colors duration-100 hover:bg-accent hover:text-foreground"
-                >
-                  <Languages className="size-4" strokeWidth={1.75} />
-                </button>
-              </DropdownMenuTrigger>
-            </TooltipTrigger>
-            <TooltipContent side="right" className="font-mono text-xs">
-              {t.sidebar.language}
-            </TooltipContent>
-          </Tooltip>
-          <DropdownMenuContent side="right" align="end" className="w-32">
-            {LOCALES.map((l) => (
-              <DropdownMenuItem
-                key={l.value}
-                onClick={() => void setLocale(l.value)}
-                className="justify-between"
-              >
-                {l.label}
-                {locale === l.value && <Check className="size-3.5 text-[#666]" />}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-
         <RailButton label={t.sidebar.newApp} onClick={() => openEditor(null)}>
           <Plus className="size-4" strokeWidth={1.75} />
+        </RailButton>
+        <RailButton
+          label={t.sidebar.settings}
+          active={view === "settings"}
+          onClick={() => setView("settings")}
+        >
+          <Settings className="size-4" strokeWidth={1.75} />
         </RailButton>
       </div>
     </aside>

@@ -9,12 +9,13 @@ import { toast } from "sonner";
 import { dictionaries, detectLocale, fmt, type Locale } from "@/i18n/locales";
 import { sessionRegistry } from "@/lib/session-registry";
 import { ptyList, shellsDetect } from "@/lib/pty";
-import type { AppConfig, SessionStatus, ShellInfo, ShellKind } from "@/types";
+import { DEFAULT_SETTINGS, type AppConfig, type AppSettings, type SessionStatus, type ShellInfo, type ShellKind } from "@/types";
 
-export type View = "apps" | "terminals";
+export type View = "apps" | "terminals" | "settings";
 
 const STORE_FILE = "aemeth.json";
 const APPS_KEY = "apps";
+const SETTINGS_KEY = "settings";
 
 let persistStore: Store | null = null;
 let hydrating = false;
@@ -36,16 +37,18 @@ interface AppState {
   openTabs: string[];
   activeAppId: string | null;
   view: View;
-  searchQuery: string;
   editorApp: AppConfig | null;
   editorOpen: boolean;
   deleteTarget: AppConfig | null;
   locale: Locale;
+  settings: AppSettings;
+  closePromptOpen: boolean;
 
   hydrate: () => Promise<void>;
   setLocale: (locale: Locale) => Promise<void>;
+  setSettings: (patch: Partial<AppSettings>) => Promise<void>;
+  setClosePrompt: (open: boolean) => void;
   setView: (view: View) => void;
-  setSearchQuery: (q: string) => void;
 
   openEditor: (app: AppConfig | null) => void;
   closeEditor: () => void;
@@ -73,11 +76,27 @@ export const useAppStore = create<AppState>()((set, get) => ({
   openTabs: [],
   activeAppId: null,
   view: "apps",
-  searchQuery: "",
   editorApp: null,
   editorOpen: false,
   deleteTarget: null,
   locale: detectLocale(),
+  settings: { ...DEFAULT_SETTINGS },
+  closePromptOpen: false,
+
+  setClosePrompt: (open) => set({ closePromptOpen: open }),
+
+  setSettings: async (patch) => {
+    const settings = { ...get().settings, ...patch };
+    set({ settings });
+    sessionRegistry.copyOnSelect = settings.copyOnSelect;
+    sessionRegistry.applyTerminalOptions({
+      fontSize: patch.terminalFontSize,
+      scrollback: patch.scrollback,
+    });
+    const store = await getStore();
+    await store.set(SETTINGS_KEY, settings);
+    await store.save();
+  },
 
   setLocale: async (locale) => {
     set({ locale });
@@ -100,11 +119,18 @@ export const useAppStore = create<AppState>()((set, get) => ({
     const savedLocale = await store.get<Locale>("locale");
     const locale = savedLocale ?? get().locale;
     document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
+    const savedSettings = await store.get<Partial<AppSettings>>(SETTINGS_KEY);
+    const settings = { ...DEFAULT_SETTINGS, ...savedSettings };
+    sessionRegistry.copyOnSelect = settings.copyOnSelect;
+    sessionRegistry.applyTerminalOptions({
+      fontSize: settings.terminalFontSize,
+      scrollback: settings.scrollback,
+    });
     const apps = ((await store.get<AppConfig[]>(APPS_KEY)) ?? []).sort(
       (a, b) => a.sortOrder - b.sortOrder || a.createdAt - b.createdAt,
     );
     const shells = await shellsDetect().catch(() => [] as ShellInfo[]);
-    set({ apps, shells, hydrated: true, locale });
+    set({ apps, shells, hydrated: true, locale, settings });
 
     // Reconcile sessions that survived a frontend reload.
     try {
@@ -129,7 +155,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
 
   setView: (view) => set({ view }),
-  setSearchQuery: (searchQuery) => set({ searchQuery }),
 
   openEditor: (app) => set({ editorApp: app, editorOpen: true }),
   closeEditor: () => set({ editorOpen: false, editorApp: null }),
@@ -273,6 +298,10 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   defaultShell: () => {
     const shells = get().shells;
+    const configured = get().settings.defaultShell;
+    if (configured !== "auto" && shells.some((s) => s.kind === configured && s.available)) {
+      return configured;
+    }
     const preferred: ShellKind[] = ["pwsh", "powershell", "cmd", "bash"];
     return (
       preferred.find((k) => shells.some((s) => s.kind === k && s.available)) ?? "powershell"

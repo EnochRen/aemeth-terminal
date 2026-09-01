@@ -158,10 +158,10 @@ export function AppDialog() {
             </div>
           </div>
 
-          {/* Shell + cwd */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="grid gap-2">
-              <Label>{t.dialog.shell}</Label>
+          {/* Shell */}
+          <div className="grid gap-2">
+            <Label>{t.dialog.shell}</Label>
+            <div className="max-w-60">
               <Select value={shell} onValueChange={(v) => setShell(v as ShellKind)}>
                 <SelectTrigger className="w-full">
                   <SelectValue>
@@ -184,9 +184,11 @@ export function AppDialog() {
                 </SelectContent>
               </Select>
             </div>
+          </div>
 
-            <div className="grid gap-2">
-              <Label htmlFor="app-cwd">{t.dialog.cwd}</Label>
+          {/* Working directory */}
+          <div className="grid gap-2">
+            <Label htmlFor="app-cwd">{t.dialog.cwd}</Label>
               <div className="flex gap-1.5">
                 <Input
                   id="app-cwd"
@@ -199,7 +201,6 @@ export function AppDialog() {
                   <FolderOpen className="size-4" />
                 </Button>
               </div>
-            </div>
           </div>
 
           <Separator />

@@ -50,6 +50,23 @@ export interface SessionStatus {
 
 export type AppRuntimeState = "stopped" | "starting" | "running" | "exited";
 
+/** Global, persisted preferences. */
+export interface AppSettings {
+  terminalFontSize: number;
+  scrollback: number;
+  copyOnSelect: boolean;
+  confirmClose: boolean;
+  defaultShell: ShellKind | "auto";
+}
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  terminalFontSize: 13,
+  scrollback: 10_000,
+  copyOnSelect: false,
+  confirmClose: true,
+  defaultShell: "auto",
+};
+
 /** Muted identity dots — borrowed from the Geist scale. */
 export const APP_COLORS = [
   "#ededed",
