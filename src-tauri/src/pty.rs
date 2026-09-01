@@ -28,7 +28,11 @@ pub const EVENT_EXIT: &str = "pty://exit";
 
 const INITIAL_COLS: u16 = 110;
 const INITIAL_ROWS: u16 = 28;
-const READ_BUF_SIZE: usize = 16 * 1024;
+// Large on purpose: each read becomes one IPC event to the webview. Chatty
+// services (dev servers) used to flood the event queue with 16 KiB events,
+// and window-close events had to wait behind that backlog. 256 KiB keeps the
+// queue shallow without adding latency for interactive output.
+const READ_BUF_SIZE: usize = 256 * 1024;
 
 /// One preset command line that is typed into the shell after startup.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +107,9 @@ struct SessionHandle {
 #[derive(Default)]
 struct ManagerInner {
     sessions: Mutex<HashMap<String, Arc<SessionHandle>>>,
+    /// Set once the user confirms the close-guard dialog; the next
+    /// `CloseRequested` event is let through without interception.
+    force_close: AtomicBool,
 }
 
 /// Cheaply cloneable handle to the process-wide session table.
@@ -121,6 +128,16 @@ fn now_ms() -> u64 {
 fn sleep_ms(ms: u64) {
     if ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
+}
+
+/// Suffix that terminates the shell once the last preset command returns,
+/// so a session with preset commands lives exactly as long as its service
+/// (docker-container semantics). Apps without commands stay interactive.
+fn exit_suffix(shell: ShellKind) -> &'static str {
+    match shell {
+        ShellKind::Cmd => " & exit",
+        _ => "; exit",
     }
 }
 
@@ -201,7 +218,9 @@ impl PtyManager {
             std::thread::Builder::new()
                 .name(format!("pty-read-{session_id}"))
                 .spawn(move || {
-                    let mut buf = [0u8; READ_BUF_SIZE];
+                    // Heap buffer: 256 KiB would eat a quarter of the
+                    // thread's 1 MiB stack on Windows.
+                    let mut buf = vec![0u8; READ_BUF_SIZE];
                     loop {
                         match reader.read(&mut buf) {
                             Ok(0) | Err(_) => break,
@@ -251,6 +270,7 @@ impl PtyManager {
         // Preset command scheduler: types the configured lines into the shell.
         if !spec.commands.is_empty() {
             let handle = scheduler_handle;
+            let shell = spec.shell;
             let startup_delay = spec.startup_delay_ms;
             let commands = spec.commands.clone();
             let session_id = session_id.clone();
@@ -258,11 +278,21 @@ impl PtyManager {
                 .name(format!("pty-cmds-{session_id}"))
                 .spawn(move || {
                     sleep_ms(startup_delay);
-                    for preset in commands {
+                    let last = commands.len().saturating_sub(1);
+                    for (idx, preset) in commands.iter().enumerate() {
                         if !handle.alive.load(Ordering::SeqCst) {
                             break;
                         }
-                        let mut line = preset.command;
+                        let mut line = preset.command.trim_end().to_string();
+                        if idx == last {
+                            // Tie the shell's lifetime to the service: when
+                            // the last command returns, the shell exits too.
+                            line = if line.is_empty() {
+                                "exit".to_string()
+                            } else {
+                                format!("{}{}", line, exit_suffix(shell))
+                            };
+                        }
                         line.push('\r');
                         let _ = handle.writer.lock().write_all(line.as_bytes());
                         sleep_ms(preset.delay_ms);
@@ -303,8 +333,27 @@ impl PtyManager {
     pub fn close(&self, session_id: &str) {
         let session = self.inner.sessions.lock().get(session_id).cloned();
         if let Some(session) = session {
+            // Kill the whole tree so services spawned by the shell (node,
+            // yarn, vite, ...) don't survive the session.
+            if let Some(pid) = session.pid {
+                kill_tree(pid);
+            }
+            // Fallback if the tree kill missed the direct child.
             let _ = session.killer.lock().kill();
         }
+    }
+
+    /// Number of currently running sessions.
+    pub fn running_count(&self) -> usize {
+        self.inner.sessions.lock().len()
+    }
+
+    pub fn mark_force_close(&self) {
+        self.inner.force_close.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_force_close(&self) -> bool {
+        self.inner.force_close.load(Ordering::SeqCst)
     }
 
     /// All currently running sessions.
@@ -334,3 +383,19 @@ impl PtyManager {
         }
     }
 }
+
+/// Kill the process tree rooted at `pid` (shell + anything it spawned).
+/// `taskkill /T` is the only reliable way on Windows to reach grandchildren;
+/// TerminateProcess alone would orphan the user's services.
+#[cfg(windows)]
+fn kill_tree(pid: u32) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let _ = std::process::Command::new("taskkill")
+        .args(["/T", "/F", "/PID", &pid.to_string()])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+}
+
+#[cfg(not(windows))]
+fn kill_tree(_pid: u32) {}
