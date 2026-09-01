@@ -4,6 +4,7 @@ import { AppDialog } from "@/components/apps/app-dialog";
 import { AppsView } from "@/components/apps/apps-view";
 import { DeleteDialog } from "@/components/apps/delete-dialog";
 import { Sidebar } from "@/components/layout/sidebar";
+import { TitleBar } from "@/components/layout/title-bar";
 import { TerminalsView } from "@/components/terminals/terminals-view";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -23,17 +24,20 @@ export default function App() {
 
   return (
     <TooltipProvider delayDuration={250}>
-      <div className="flex h-screen overflow-hidden bg-background text-foreground">
-        <Sidebar />
-        <main className="min-w-0 flex-1">
-          {!hydrated ? (
-            <BootScreen />
-          ) : view === "apps" ? (
-            <AppsView />
-          ) : (
-            <TerminalsView />
-          )}
-        </main>
+      <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+        <TitleBar />
+        <div className="flex min-h-0 flex-1">
+          <Sidebar />
+          <main className="min-w-0 flex-1">
+            {!hydrated ? (
+              <BootScreen />
+            ) : view === "apps" ? (
+              <AppsView />
+            ) : (
+              <TerminalsView />
+            )}
+          </main>
+        </div>
       </div>
 
       <AppDialog />

@@ -103,6 +103,12 @@ const zh = {
   app: {
     loading: "加载中",
   },
+  window: {
+    minimize: "最小化",
+    maximize: "最大化",
+    restore: "还原",
+    close: "关闭",
+  },
 };
 
 export type Dict = typeof zh;
@@ -201,6 +207,12 @@ const en: Dict = {
   },
   app: {
     loading: "loading",
+  },
+  window: {
+    minimize: "Minimize",
+    maximize: "Maximize",
+    restore: "Restore",
+    close: "Close",
   },
 };
 

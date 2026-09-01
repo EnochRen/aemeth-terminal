@@ -25,11 +25,6 @@ export function Sidebar() {
 
   return (
     <aside className="flex w-14 shrink-0 flex-col items-center border-r border-border bg-sidebar py-3">
-      {/* Brand mark — bordered square, mono glyph */}
-      <div className="mb-5 flex size-7 select-none items-center justify-center rounded-md border border-[#333] font-mono text-[13px] font-medium text-foreground">
-        Æ
-      </div>
-
       <nav className="flex flex-col items-center gap-1">
         <RailButton active={view === "apps"} label={t.sidebar.apps} onClick={() => setView("apps")}>
           <LayoutGrid className="size-4" strokeWidth={1.75} />

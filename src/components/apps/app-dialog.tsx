@@ -121,13 +121,13 @@ export function AppDialog() {
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && closeEditor()}>
-      <DialogContent className="max-w-xl gap-5">
+      <DialogContent className="gap-5 sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{editing ? t.dialog.titleEdit : t.dialog.titleNew}</DialogTitle>
           <DialogDescription>{t.dialog.desc}</DialogDescription>
         </DialogHeader>
 
-        <div className="grid max-h-[62vh] gap-5 overflow-y-auto pr-1">
+        <div className="grid max-h-[70vh] gap-5 overflow-y-auto pr-1">
           {/* Name + color */}
           <div className="grid gap-2">
             <Label htmlFor="app-name">{t.dialog.name}</Label>
@@ -164,16 +164,20 @@ export function AppDialog() {
               <Label>{t.dialog.shell}</Label>
               <Select value={shell} onValueChange={(v) => setShell(v as ShellKind)}>
                 <SelectTrigger className="w-full">
-                  <SelectValue />
+                  <SelectValue>
+                    {availableShells.find((s) => s.kind === shell)?.label ?? shell}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {availableShells.map((s) => (
                     <SelectItem key={s.kind} value={s.kind}>
-                      <span className="flex items-center gap-2">
+                      <span className="flex items-baseline gap-2">
                         {s.label}
-                        <span className="max-w-40 truncate text-[10px] text-muted-foreground">
-                          {s.path}
-                        </span>
+                        {s.path && (
+                          <span className="max-w-64 truncate text-[10px] text-muted-foreground">
+                            {s.path}
+                          </span>
+                        )}
                       </span>
                     </SelectItem>
                   ))}
