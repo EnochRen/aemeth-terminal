@@ -1,58 +1,80 @@
+<div align="center">
+
 # Aemeth Terminal
 
-> 一个面向开发者的**多终端服务启动器**：为每个服务建立一张"应用卡片"，预设好 Shell、工作目录与启动指令，一键启动、集中监控、多终端快速切换。
+**A multi-session service launcher & terminal workbench for developers.**
 
-基于 **Tauri 2 + React 19 + Vite + TypeScript 7 + shadcn/ui** 构建，PTY 层由 [portable-pty](https://crates.io/crates/portable-pty)（Windows 上走 ConPTY）驱动，终端渲染使用 [xterm.js](https://xtermjs.org/)。
+One card per service — preset the shell, working directory, and boot commands, then launch, monitor, and switch between all your terminals in one place.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black)](https://tauri.app/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-7.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)](#)
+
+[English](./README.md) · [简体中文](./README.zh-CN.md)
+
+</div>
 
 ---
 
-## ✨ 功能特性
+## Why Aemeth?
 
-- **应用卡片（App 列表）** — 每个服务一张卡片：名称、颜色、Shell 类型、工作目录、预设指令一览、实时运行状态（运行中 / 已退出·退出码 / 未运行）。
-- **预设指令** — 为每个应用配置按序执行的指令（如 `cd E:\ProjectWork\qa\torappu-qa\qa-egg` → `yarn dev`），每条指令可单独设置发送间隔，并可配置"等待 Shell 就绪"的启动延时。
-- **多 Shell 支持** — 每个应用可独立选择 **PowerShell / PowerShell 7 (pwsh) / CMD / Git Bash**（自动探测本机可用 Shell）。
-- **终端工作台** — Win11 风格标签页，多终端常驻内存、一键切换；支持中键关闭标签、右键复制/粘贴（经典控制台习惯）。
-- **随应用启动** — 勾选后打开 Aemeth 即自动拉起对应服务。
-- **快捷键** — `Ctrl+Tab` / `Ctrl+Shift+Tab` 切换标签，`Ctrl+1…9` 跳转，`Ctrl+W` 关闭。
-- **多语言** — 简体中文 / English，自动检测系统语言并持久化；侧边栏可切换。
-- **字体** — 英文 Geist Sans / Geist Mono，中文 Noto Sans SC；终端同为该字体栈。
-- **退出即清理** — 关闭窗口时自动终止所有派生 Shell 进程。
-- **Geist / Vercel 风格视觉** — 纯黑画布、发丝级边框、Geist Sans + Geist Mono，颜色只用于状态语义。
+Running a microservice stack locally usually means juggling a dozen console windows, each with its own `cd` + `yarn dev` ritual. Aemeth turns every service into an **app card** with a preset boot sequence — one click brings the whole stack up, and a tabbed terminal workbench keeps every session a keystroke away.
 
-## 🖥️ 两个界面
+## Features
 
-| 界面 | 说明 |
+- 🗂️ **App cards** — one card per service: name, color, shell type, working directory, boot sequence, and live status (running / exited with code / stopped).
+- ⚡ **Boot sequences** — configure ordered commands per app (e.g. `cd E:\project\api` → `yarn dev`), with a per-command send delay and an optional "wait for shell ready" startup delay.
+- 🐚 **Multi-shell** — each app picks its own shell: **PowerShell / PowerShell 7 (pwsh) / CMD / Git Bash**, auto-detected from your machine.
+- 🖥️ **Terminal workbench** — Windows 11-style tabs; sessions stay resident in memory for instant switching. Middle-click to close a tab, right-click to copy/paste (classic console muscle memory).
+- 🚀 **Auto-launch** — mark apps to start automatically when Aemeth opens.
+- ⌨️ **Keyboard-first** — `Ctrl+Tab` to cycle tabs, `Ctrl+1…9` to jump, `Ctrl+W` to close.
+- 🌏 **i18n** — English / 简体中文, auto-detected from the system and persisted; switchable from the sidebar.
+- 🔤 **Typography** — Geist Sans / Geist Mono for Latin, Noto Sans SC for CJK — in the UI *and* the terminal.
+- 🧹 **Clean exit** — closing the window terminates every spawned shell process.
+- ⚫ **Geist / Vercel-inspired visuals** — pure black canvas, hairline borders, color reserved for status semantics.
+
+## Two surfaces
+
+| Surface | Description |
 | --- | --- |
-| **应用列表** | 总览所有服务的配置与运行状态；启动 / 停止 / 重启 / 编辑 / 删除；搜索过滤。 |
-| **终端** | 每个运行中的服务一个标签页，xterm.js 完整渲染（真彩、WebGL 加速、滚动回溯 10,000 行）。 |
+| **Apps** | Overview of every service's config and runtime status — start / stop / restart / edit / delete, with search. |
+| **Terminals** | One tab per running service, fully rendered by xterm.js (true color, WebGL acceleration, 10,000-line scrollback). |
 
-## 🚀 快速开始
+## Getting started
 
-前置要求：[Node.js ≥ 20](https://nodejs.org/)、[Rust (stable)](https://rustup.rs/)、pnpm，以及 Windows 平台对应的 [Tauri 依赖](https://tauri.app/start/prerequisites/)。
+### Prerequisites
+
+- [Node.js ≥ 20](https://nodejs.org/) and [pnpm](https://pnpm.io/)
+- [Rust (stable)](https://rustup.rs/)
+- [Tauri platform prerequisites](https://tauri.app/start/prerequisites/) for your OS
+
+### Run from source
 
 ```bash
-pnpm install        # 安装前端依赖
-pnpm tauri dev      # 开发模式（热更新）
-pnpm tauri build    # 生产构建（产物在 src-tauri/target/release/bundle）
+pnpm install        # install frontend dependencies
+pnpm tauri dev      # development mode (hot reload)
+pnpm tauri build    # production build → src-tauri/target/release/bundle
 ```
 
-## ⌨️ 快捷键
+## Keyboard shortcuts
 
-| 按键 | 作用 |
+| Keys | Action |
 | --- | --- |
-| `Ctrl + Tab` / `Ctrl + Shift + Tab` | 下一个 / 上一个终端标签 |
-| `Ctrl + 1…9` | 跳转到第 N 个标签 |
-| `Ctrl + W` | 关闭当前标签（并停止其进程） |
-| 终端内右键 | 有选中文本 → 复制；否则 → 粘贴 |
-| 标签中键单击 | 关闭该标签 |
+| `Ctrl + Tab` / `Ctrl + Shift + Tab` | Next / previous terminal tab |
+| `Ctrl + 1…9` | Jump to tab N |
+| `Ctrl + W` | Close current tab (and stop its process) |
+| Right-click in terminal | Copy if text is selected, otherwise paste |
+| Middle-click a tab | Close that tab |
 
-## 🏗️ 技术架构
+## Architecture
 
 ```
 ┌────────────────────────────────────────────────────────┐
 │  Webview (React 19 + shadcn/ui + Tailwind v4)          │
 │                                                        │
-│  zustand store ──► SessionRegistry (xterm.js 实例池)    │
+│  zustand store ──► SessionRegistry (xterm.js pool)     │
 │        │                 │                             │
 │        ▼                 ▼                             │
 │  plugin-store       invoke / events                    │
@@ -62,33 +84,47 @@ pnpm tauri build    # 生产构建（产物在 src-tauri/target/release/bundle�
 ┌────────────────────────────────────────────────────────┐
 │  Rust core (Tauri 2)                                   │
 │                                                        │
-│  PtyManager ── portable-pty (ConPTY) ── powershell/    │
-│    │                                   cmd/bash/pwsh   │
-│    ├─ reader 线程  ──► pty://output (base64 事件)       │
-│    ├─ reaper 线程  ──► pty://exit  (退出码)             │
-│    └─ scheduler   ──► 按延时逐条写入预设指令             │
+│  PtyManager ── portable-pty (ConPTY) ── powershell /   │
+│    │                                  cmd / bash / pwsh │
+│    ├─ reader thread ──► pty://output (base64 events)   │
+│    ├─ reaper thread ──► pty://exit   (exit codes)      │
+│    └─ scheduler   ──► feeds boot commands by delay     │
 └────────────────────────────────────────────────────────┘
 ```
 
-- **`src-tauri/src/pty.rs`** — 会话生命周期：启动、写入、resize、kill、事件流；输出以 base64 分片避免 UTF-8 边界问题。
-- **`src-tauri/src/shells.rs`** — Shell 探测与解析（PATH + 常见安装路径）。
-- **`src/lib/session-registry.ts`** — xterm 实例池；终端在会话启动时即创建，切视图不丢输出。
-- **`src/store/use-app-store.ts`** — 全局状态 + `tauri-plugin-store` 持久化。
+- **`src-tauri/src/pty.rs`** — session lifecycle: spawn, write, resize, kill, event stream. Output is chunked as base64 to avoid splitting UTF-8 sequences.
+- **`src-tauri/src/shells.rs`** — shell detection & resolution (PATH + common install locations).
+- **`src/lib/session-registry.ts`** — xterm instance pool; terminals are created when a session starts, so switching views never loses output.
+- **`src/store/use-app-store.ts`** — global state + persistence via `tauri-plugin-store`.
 
-## 📁 目录结构
+## Project structure
 
 ```
-├── src/                    # 前端
+├── src/                    # Frontend
 │   ├── components/
-│   │   ├── apps/           # 应用列表、卡片、编辑/删除对话框
-│   │   ├── terminals/      # 标签栏 + 终端窗格
-│   │   ├── layout/         # 侧边导航
-│   │   └── shared/ ui/     # 状态标识 / shadcn 组件
-│   ├── hooks/ lib/ store/  # 快捷键、IPC、会话注册、状态
-├── src-tauri/              # Rust 后端
+│   │   ├── apps/           # App list, cards, edit/delete dialogs
+│   │   ├── terminals/      # Tab bar + terminal panes
+│   │   ├── layout/         # Sidebar navigation, title bar
+│   │   └── shared/ ui/     # Status pills / shadcn primitives
+│   ├── hooks/ lib/ store/  # Shortcuts, IPC, session registry, state
+├── src-tauri/              # Rust backend
 │   └── src/{lib,pty,shells}.rs
 ```
 
-## 📄 License
+## Tech stack
 
-MIT
+| Layer | Technology |
+| --- | --- |
+| Desktop shell | [Tauri 2](https://tauri.app/) |
+| UI | React 19 · TypeScript 7 · Vite · Tailwind CSS v4 · shadcn/ui |
+| State | zustand + `tauri-plugin-store` |
+| Terminal | [xterm.js](https://xtermjs.org/) (WebGL, fit, search, unicode11 addons) |
+| PTY | [portable-pty](https://crates.io/crates/portable-pty) (ConPTY on Windows) |
+
+## License
+
+[MIT](./LICENSE) © EnochRen
+
+## Acknowledgements
+
+Built on the shoulders of great open source: [Tauri](https://tauri.app/), [xterm.js](https://xtermjs.org/), [portable-pty](https://github.com/wez/wezterm/tree/main/termwiz), [shadcn/ui](https://ui.shadcn.com/), and the [Geist](https://vercel.com/font) font family.
