@@ -7,6 +7,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { SearchAddon } from "@xterm/addon-search";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 
 import {
@@ -15,6 +16,7 @@ import {
   listenPtyExit,
   listenPtyOutput,
   listenPtyPorts,
+  openUrl,
   ptyClose,
   ptyResize,
   ptyStart,
@@ -81,6 +83,14 @@ export class SessionClient {
 
     this.term.loadAddon(this.fit);
     this.term.loadAddon(this.search);
+
+    const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
+    const webLinks = new WebLinksAddon((event, uri) => {
+      const modKey = isMac ? event.metaKey : event.ctrlKey;
+      if (!modKey) return;
+      void openUrl(uri);
+    });
+    this.term.loadAddon(webLinks);
     const unicode = new Unicode11Addon();
     this.term.loadAddon(unicode);
     this.term.unicode.activeVersion = "11";
