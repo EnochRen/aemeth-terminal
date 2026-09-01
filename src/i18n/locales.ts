@@ -1,7 +1,3 @@
-/**
- * Typed i18n dictionaries. `zh` is the source of truth; `en` must satisfy the
- * same shape, so missing translations fail at compile time.
- */
 export type Locale = "zh" | "en";
 
 export const LOCALES: { value: Locale; label: string }[] = [
@@ -50,6 +46,7 @@ const zh = {
     interactive: "交互式 shell",
     more: "+{n} 条",
     edit: "编辑",
+    clone: "克隆",
     delete: "删除",
     pid: "pid {pid}",
     duration: "耗时 {t}s",
@@ -64,7 +61,11 @@ const zh = {
   dialog: {
     titleNew: "新建应用",
     titleEdit: "编辑应用",
+    titleClone: "克隆应用",
     desc: "为服务指定 Shell、工作目录与启动指令，之后即可一键启动。",
+    tabGeneral: "基本",
+    tabRuntime: "运行时",
+    tabEnv: "环境",
     kindService: "服务",
     kindScript: "脚本",
     name: "应用名称",
@@ -259,6 +260,7 @@ const en: Dict = {
     interactive: "interactive shell",
     more: "+{n} more",
     edit: "Edit",
+    clone: "Clone",
     delete: "Delete",
     pid: "pid {pid}",
     duration: "{t}s",
@@ -273,7 +275,11 @@ const en: Dict = {
   dialog: {
     titleNew: "New application",
     titleEdit: "Edit application",
+    titleClone: "Clone application",
     desc: "Pick a shell, working directory and startup commands — then launch with one click.",
+    tabGeneral: "General",
+    tabRuntime: "Runtime",
+    tabEnv: "Environment",
     kindService: "Service",
     kindScript: "Script",
     name: "Application name",
@@ -429,7 +435,6 @@ const en: Dict = {
 
 export const dictionaries: Record<Locale, Dict> = { zh, en };
 
-/** Replace `{key}` placeholders. */
 export function fmt(template: string, vars: Record<string, string | number>): string {
   return template.replace(/\{(\w+)\}/g, (_, key: string) => String(vars[key] ?? ""));
 }
