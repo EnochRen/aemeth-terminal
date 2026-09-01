@@ -17,7 +17,7 @@ use std::{
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use parking_lot::Mutex;
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
@@ -90,7 +90,8 @@ struct OutputEvent {
 struct SessionHandle {
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
-    child: Mutex<Box<dyn Child + Send + Sync>>,
+    /// Detached kill handle — safe to call while the reaper owns the child.
+    killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     app_id: String,
     name: String,
     shell: ShellKind,
@@ -158,8 +159,9 @@ impl PtyManager {
         }
         cmd.env("AEMETH_APP", spec.name.as_str());
 
-        let child = pair.slave.spawn_command(cmd)?;
+        let mut child = pair.slave.spawn_command(cmd)?;
         let pid = child.process_id();
+        let killer = child.clone_killer();
         let writer = pair.master.take_writer()?;
         let mut reader = pair.master.try_clone_reader()?;
 
@@ -179,7 +181,7 @@ impl PtyManager {
         let handle = Arc::new(SessionHandle {
             writer: Mutex::new(writer),
             master: Mutex::new(pair.master),
-            child: Mutex::new(child),
+            killer: Mutex::new(killer),
             app_id: spec.app_id.clone(),
             name: spec.name.clone(),
             shell: spec.shell,
@@ -226,10 +228,8 @@ impl PtyManager {
             std::thread::Builder::new()
                 .name(format!("pty-wait-{session_id}"))
                 .spawn(move || {
-                    let exit_code = {
-                        let mut child = handle.child.lock();
-                        child.wait().ok().map(|st| st.exit_code())
-                    };
+                    // The reaper owns the child exclusively — no lock needed.
+                    let exit_code = child.wait().ok().map(|st| st.exit_code());
                     handle.alive.store(false, Ordering::SeqCst);
                     manager.inner.sessions.lock().remove(&session_id);
                     let _ = app.emit(
@@ -296,9 +296,14 @@ impl PtyManager {
     }
 
     /// Kill the session's process tree (exit event follows from the reaper).
+    ///
+    /// The sessions-map guard is dropped before touching the killer, and the
+    /// killer is disjoint from the child handle the reaper blocks on — no
+    /// deadlock path.
     pub fn close(&self, session_id: &str) {
-        if let Some(session) = self.inner.sessions.lock().get(session_id).cloned() {
-            let _ = session.child.lock().kill();
+        let session = self.inner.sessions.lock().get(session_id).cloned();
+        if let Some(session) = session {
+            let _ = session.killer.lock().kill();
         }
     }
 
