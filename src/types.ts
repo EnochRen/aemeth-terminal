@@ -80,6 +80,23 @@ export interface ProcessInfo {
   ports: number[];
 }
 
+/** Deep detail for a single process — mirrors `ProcessDetail` in Rust. */
+export interface ProcessDetail {
+  pid: number;
+  ppid: number | null;
+  name: string;
+  cmd: string;
+  exe: string | null;
+  memory: number;
+  cpu: number;
+  startTime: number;
+  ports: number[];
+  threads?: number;
+  environ: string[];
+  diskReadBytes: number;
+  diskWriteBytes: number;
+}
+
 /** Global, persisted preferences. */
 export interface AppSettings {
   terminalFontSize: number;

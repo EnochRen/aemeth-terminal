@@ -80,6 +80,11 @@ fn process_kill(pid: u32) -> Result<usize, String> {
     procs::kill_tree(pid)
 }
 
+#[tauri::command]
+fn process_detail(pid: u32) -> Result<procs::ProcessDetail, String> {
+    procs::detail(pid).ok_or_else(|| "process not found".into())
+}
+
 /// User confirmed the close-guard dialog: destroy the window natively.
 /// Deliberately bypasses the webview event queue so the close is instant
 /// even while sessions are streaming output.
@@ -108,6 +113,7 @@ pub fn run() {
             read_text_file,
             process_list,
             process_kill,
+            process_detail,
             close_force
         ])
         // Native close guard. If a JS `onCloseRequested` listener were

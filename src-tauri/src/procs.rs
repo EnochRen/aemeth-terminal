@@ -26,6 +26,28 @@ pub struct ProcessInfo {
     pub ports: Vec<u16>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessDetail {
+    pub pid: u32,
+    pub ppid: Option<u32>,
+    pub name: String,
+    pub cmd: String,
+    pub exe: Option<String>,
+    pub memory: u64,
+    pub cpu: f32,
+    pub start_time: u64,
+    pub ports: Vec<u16>,
+    /// Number of threads (not available via sysinfo on all platforms).
+    pub threads: Option<u32>,
+    /// Environment variables (KEY=VALUE).
+    pub environ: Vec<String>,
+    /// Total bytes read (disk I/O).
+    pub disk_read_bytes: u64,
+    /// Total bytes written (disk I/O).
+    pub disk_write_bytes: u64,
+}
+
 /// Reused between snapshots so CPU usage is measured over the poll interval.
 static SYSTEM: Mutex<Option<System>> = Mutex::new(None);
 
@@ -70,6 +92,45 @@ pub fn snapshot() -> Vec<ProcessInfo> {
         .collect();
     infos.sort_by_key(|i| i.pid);
     infos
+}
+
+/// In‑depth information for a single process (includes environment variables
+/// and disk I/O).
+pub fn detail(pid: u32) -> Option<ProcessDetail> {
+    let mut slot = lock_system();
+    let system = slot.get_or_insert_with(System::new_all);
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[Pid::from_u32(pid)]),
+        false,
+        ProcessRefreshKind::everything(),
+    );
+    let p = system.processes().get(&Pid::from_u32(pid))?;
+    let listeners = ports::listening_ports();
+    let disk = p.disk_usage();
+    Some(ProcessDetail {
+        pid: p.pid().as_u32(),
+        ppid: p.parent().map(|x| x.as_u32()),
+        name: p.name().to_string_lossy().into_owned(),
+        cmd: p
+            .cmd()
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join(" "),
+        exe: p.exe().map(|e| e.to_string_lossy().into_owned()),
+        memory: p.memory(),
+        cpu: p.cpu_usage(),
+        start_time: p.start_time(),
+        ports: listeners.get(&pid).cloned().unwrap_or_default(),
+        threads: None,
+        environ: p
+            .environ()
+            .iter()
+            .map(|e| e.to_string_lossy().into_owned())
+            .collect(),
+        disk_read_bytes: disk.total_read_bytes,
+        disk_write_bytes: disk.total_written_bytes,
+    })
 }
 
 /// Force-kill `root` and every descendant (children first). Returns the number

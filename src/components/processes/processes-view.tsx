@@ -13,12 +13,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Drawer } from "@/components/ui/drawer";
 import {
   Select,
   SelectContent,
@@ -29,9 +24,9 @@ import {
 import { Sparkline } from "@/components/shared/sparkline";
 import { fmt } from "@/i18n/locales";
 import { useT } from "@/i18n/use-t";
-import { processKill, processList } from "@/lib/proc";
+import { processDetail as fetchDetail, processKill, processList } from "@/lib/proc";
 import { cn } from "@/lib/utils";
-import type { ProcessInfo } from "@/types";
+import type { ProcessDetail, ProcessInfo } from "@/types";
 
 type Field = "all" | "name" | "pid" | "port" | "args";
 type SortKey = "name" | "pid" | "memory" | "cpu" | "start";
@@ -63,7 +58,7 @@ export function ProcessesView() {
   const [field, setField] = useState<Field>("all");
   const [sortKey, setSortKey] = useState<SortKey>("memory");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
-  const [detail, setDetail] = useState<ProcessInfo | null>(null);
+  const [detail, setDetail] = useState<ProcessDetail | null>(null);
   const [killTarget, setKillTarget] = useState<ProcessInfo | null>(null);
 
   // Ring buffers for sparkline data: pid → {cpu[], mem[]}
@@ -267,7 +262,14 @@ export function ProcessesView() {
                       size="icon"
                       className="size-6 text-[#a1a1a1]"
                       title={t.proc.details}
-                      onClick={() => setDetail(p)}
+                    onClick={async () => {
+                      try {
+                        const d = await fetchDetail(p.pid);
+                        setDetail(d);
+                      } catch {
+                        /* process disappeared */
+                      }
+                    }}
                     >
                       <Info className="size-3.5" />
                     </Button>
@@ -295,47 +297,89 @@ export function ProcessesView() {
         </table>
       </div>
 
-      {/* Details dialog */}
-      <Dialog open={detail !== null} onOpenChange={(o) => !o && setDetail(null)}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle className="font-mono text-sm">
-              {detail?.name} · {detail?.pid}
-            </DialogTitle>
-          </DialogHeader>
-          {detail && (
-            <div className="space-y-2 font-mono text-[11.5px]">
-              <Row label={t.proc.exe}>{detail.exe ?? "—"}</Row>
-              <Row label={t.proc.cmdline}>{detail.cmd || "—"}</Row>
-              <Row label={t.proc.parent}>{detail.ppid ?? "—"}</Row>
-              <Row label={t.proc.ports}>
-                {detail.ports.length > 0
-                  ? detail.ports.map((x) => `:${x}`).join(" ")
-                  : "—"}
-              </Row>
-              <Row label={t.proc.memory}>
-                {fmtMem(detail.memory)}
-                <Sparkline
-                  data={historyRef.current.get(detail.pid)?.mem ?? []}
-                  stroke="#30a46c"
-                  fill="rgba(48,164,108,0.15)"
-                  className="ml-3 inline-block align-middle"
+      {/* Detail drawer */}
+      <Drawer open={detail !== null} onClose={() => setDetail(null)}>
+        {detail && (
+          <div className="space-y-5 px-5 py-4">
+            {/* Basic info */}
+            <Section title={t.proc.basicInfo}>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 font-mono text-[11.5px]">
+                <Kv k={t.proc.colName} v={detail.name} />
+                <Kv k={t.proc.colPid} v={String(detail.pid)} />
+                <Kv k={t.proc.parent} v={detail.ppid !== null ? String(detail.ppid) : "—"} />
+                <Kv k={t.proc.colStart} v={fmtTime(detail.startTime)} />
+              </div>
+            </Section>
+
+            {/* Command line */}
+            <Section title={t.proc.cmdline}>
+              <pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-[11.5px] leading-relaxed text-[#a1a1a1]">
+                {detail.cmd || t.proc.empty}
+              </pre>
+            </Section>
+
+            {/* Performance */}
+            <Section title={t.proc.performance}>
+              <div className="space-y-2.5">
+                <Kv
+                  k={t.proc.cpu}
+                  v={`${detail.cpu.toFixed(1)}%`}
+                  extra={
+                    <Sparkline
+                      data={historyRef.current.get(detail.pid)?.cpu ?? []}
+                      width={160}
+                      height={20}
+                      stroke="#ffb224"
+                      fill="rgba(255,178,36,0.15)"
+                    />
+                  }
                 />
-              </Row>
-              <Row label={t.proc.cpu}>
-                {detail.cpu.toFixed(1)}%
-                <Sparkline
-                  data={historyRef.current.get(detail.pid)?.cpu ?? []}
-                  stroke="#ffb224"
-                  fill="rgba(255,178,36,0.15)"
-                  className="ml-3 inline-block align-middle"
+                <Kv
+                  k={t.proc.memory}
+                  v={fmtMem(detail.memory)}
+                  extra={
+                    <Sparkline
+                      data={historyRef.current.get(detail.pid)?.mem ?? []}
+                      width={160}
+                      height={20}
+                      stroke="#30a46c"
+                      fill="rgba(48,164,108,0.15)"
+                    />
+                  }
                 />
-              </Row>
-              <Row label={t.proc.started}>{fmtTime(detail.startTime)}</Row>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+                {(detail.diskReadBytes > 0 || detail.diskWriteBytes > 0) && (
+                  <>
+                    <Kv k={t.proc.diskRead} v={fmtBytes(detail.diskReadBytes)} />
+                    <Kv k={t.proc.diskWrite} v={fmtBytes(detail.diskWriteBytes)} />
+                  </>
+                )}
+              </div>
+            </Section>
+
+            {/* Listening ports */}
+            <Section title={t.proc.ports}>
+              {detail.ports.length > 0 ? (
+                <span className="font-mono text-[11.5px] text-state-running">
+                  {detail.ports.map((x) => `:${x}`).join("  ")}
+                </span>
+              ) : (
+                <span className="font-mono text-[11.5px] text-[#525252]">{t.proc.empty}</span>
+              )}
+            </Section>
+
+            {/* Environment variables */}
+            <Section title={t.proc.environ}>
+              {detail.environ.length > 0 ? (
+                <pre className="max-h-60 overflow-y-auto font-mono text-[11px] leading-relaxed text-[#a1a1a1]">
+                  {detail.environ.join("\n")}
+                </pre>
+              ) : (
+                <span className="font-mono text-[11px] text-[#525252]">{t.proc.empty}</span>
+              )}
+            </Section>
+          </div>
+        )}
+      </Drawer>
 
       {/* Kill confirm */}
       <AlertDialog open={killTarget !== null} onOpenChange={(o) => !o && setKillTarget(null)}>
@@ -391,11 +435,48 @@ function Th({
   );
 }
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
+function fmtBytes(bytes: number): string {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  let v = bytes;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="flex gap-3">
-      <span className="w-24 shrink-0 text-[#666]">{label}</span>
-      <span className="min-w-0 break-all text-[#a1a1a1]">{children}</span>
+    <section>
+      <h4 className="mb-2 font-mono text-[10.5px] font-medium uppercase tracking-wide text-[#525252]">
+        {title}
+      </h4>
+      {children}
+    </section>
+  );
+}
+
+function Kv({
+  k,
+  v,
+  extra,
+}: {
+  k: string;
+  v: string;
+  extra?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="w-24 shrink-0 font-mono text-[11.5px] text-[#666]">{k}</span>
+      <span className="font-mono text-[11.5px] text-foreground">{v}</span>
+      <span className="ml-auto">{extra}</span>
     </div>
   );
 }

@@ -161,6 +161,11 @@ const zh = {
     memory: "内存",
     cpu: "CPU",
     started: "启动时间",
+    basicInfo: "基本信息",
+    performance: "性能",
+    environ: "环境变量",
+    diskRead: "磁盘读取",
+    diskWrite: "磁盘写入",
     empty: "没有匹配的进程",
   },
   toasts: {
@@ -358,6 +363,11 @@ const en: Dict = {
     memory: "Memory",
     cpu: "CPU",
     started: "Started at",
+    basicInfo: "Basic info",
+    performance: "Performance",
+    environ: "Environment variables",
+    diskRead: "Disk read",
+    diskWrite: "Disk write",
     empty: "No matching processes",
   },
   toasts: {
