@@ -80,6 +80,7 @@ pub struct SessionStatus {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct OutputEvent {
     session_id: String,
     /// Base64-encoded raw terminal bytes.
