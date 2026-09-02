@@ -3,58 +3,39 @@ name: Release
 on:
   push:
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+*'
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+  workflow_dispatch:
 
 jobs:
-  create-release:
-    permissions:
-      contents: write
+  meta:
     runs-on: ubuntu-latest
     outputs:
-      release_id: ${{ steps.create-release.outputs.result }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      is-release: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
-      - uses: actions/checkout@v4
-      - name: create release
-        id: create-release
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { data } = await github.rest.repos.createRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: '${{ github.ref_name }}',
-              name: 'Aemeth Terminal ${{ github.ref_name }}',
-              body: 'See the attached assets to download and install this version.',
-              draft: true,
-              prerelease: false,
-            });
-            return data.id;
+      - name: Get version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION="0.0.0-dev"
+            TAG="dev"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
 
-  build-tauri:
-    needs: create-release
-    permissions:
-      contents: write
+  windows:
+    needs: meta
+    runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: windows-latest
-            args: ''
-          - platform: ubuntu-22.04
-            args: ''
-          - platform: macos-latest
-            args: '--target aarch64-apple-darwin'
-          - platform: macos-latest
-            args: '--target x86_64-apple-darwin'
-    runs-on: ${{ matrix.platform }}
+        arch: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v4
-
-      - name: install dependencies (ubuntu)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
 
       - uses: pnpm/action-setup@v4
         with:
@@ -67,39 +48,193 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.arch == 'x86_64' && 'x86_64-pc-windows-msvc' || 'aarch64-pc-windows-msvc' }}
 
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: './src-tauri -> target'
+          workspaces: "./src-tauri -> target"
+          shared-key: "windows-${{ matrix.arch }}"
+          cache-on-failure: true
 
       - run: pnpm install --frozen-lockfile
 
-      - uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        with:
-          releaseId: ${{ needs.create-release.outputs.release_id }}
-          args: ${{ matrix.args }}
+      - name: Update version
+        shell: bash
+        run: |
+          VERSION="${{ needs.meta.outputs.version }}"
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" package.json
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" src-tauri/tauri.conf.json
+          sed -i "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
 
-  publish-release:
+      - name: Build
+        run: pnpm tauri build --no-bundle --target ${{ matrix.arch == 'x86_64' && 'x86_64-pc-windows-msvc' || 'aarch64-pc-windows-msvc' }}
+
+      - name: Prepare artifacts
+        shell: bash
+        run: |
+          mkdir -p install
+          TARGET_DIR="src-tauri/target/${{ matrix.arch == 'x86_64' && 'x86_64-pc-windows-msvc' || 'aarch64-pc-windows-msvc' }}/release"
+          cp "$TARGET_DIR/aemeth-terminal.exe" "install/Aemeth Terminal.exe"
+          cp LICENSE README.md install/ || true
+          ls -la install/
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aemeth-terminal-win-${{ matrix.arch }}-${{ needs.meta.outputs.tag }}
+          path: install
+
+  linux:
+    needs: meta
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          shared-key: "linux-${{ matrix.arch }}"
+          cache-on-failure: true
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Update version
+        run: |
+          VERSION="${{ needs.meta.outputs.version }}"
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" package.json
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" src-tauri/tauri.conf.json
+          sed -i "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
+
+      - name: Build
+        run: pnpm tauri build --no-bundle
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p install
+          cp src-tauri/target/release/aemeth-terminal install/
+          cp LICENSE README.md install/ || true
+          ls -la install/
+          tar -czvf aemeth-terminal-linux-${{ matrix.arch }}-${{ needs.meta.outputs.tag }}.tar.gz -C install .
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aemeth-terminal-linux-${{ matrix.arch }}-${{ needs.meta.outputs.tag }}
+          path: aemeth-terminal-linux-${{ matrix.arch }}-${{ needs.meta.outputs.tag }}.tar.gz
+
+  macos:
+    needs: meta
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.arch == 'x86_64' && 'x86_64-apple-darwin' || 'aarch64-apple-darwin' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          shared-key: "macos-${{ matrix.arch }}"
+          cache-on-failure: true
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Update version
+        run: |
+          VERSION="${{ needs.meta.outputs.version }}"
+          sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" package.json
+          sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" src-tauri/tauri.conf.json
+          sed -i '' "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
+
+      - name: Build
+        run: pnpm tauri build --no-bundle --target ${{ matrix.arch == 'x86_64' && 'x86_64-apple-darwin' || 'aarch64-apple-darwin' }}
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p install
+          TARGET_DIR="src-tauri/target/${{ matrix.arch == 'x86_64' && 'x86_64-apple-darwin' || 'aarch64-apple-darwin' }}/release"
+          cp "$TARGET_DIR/aemeth-terminal" install/
+          cp LICENSE README.md install/ || true
+          ls -la install/
+          tar -czvf aemeth-terminal-macos-${{ matrix.arch }}-${{ needs.meta.outputs.tag }}.tar.gz -C install .
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aemeth-terminal-macos-${{ matrix.arch }}-${{ needs.meta.outputs.tag }}
+          path: aemeth-terminal-macos-${{ matrix.arch }}-${{ needs.meta.outputs.tag }}.tar.gz
+
+  release:
+    if: ${{ needs.meta.outputs.is-release == 'true' }}
+    needs: [meta, windows, linux, macos]
+    runs-on: ubuntu-latest
     permissions:
       contents: write
-    runs-on: ubuntu-latest
-    needs: [create-release, build-tauri]
     steps:
-      - name: publish release
-        id: publish-release
-        uses: actions/github-script@v7
-        env:
-          release_id: ${{ needs.create-release.outputs.release_id }}
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
         with:
-          script: |
-            github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: process.env.release_id,
-              draft: false,
-              prerelease: false,
-            });
+          path: artifacts
+
+      - name: Package artifacts
+        run: |
+          cd artifacts
+          for dir in */; do
+            name="${dir%/}"
+            cd "$name"
+            if ls *.tar.gz 1> /dev/null 2>&1; then
+              mv *.tar.gz ../
+            else
+              zip -r "../${name}.zip" .
+            fi
+            cd ..
+          done
+          ls -la
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.meta.outputs.tag }}
+          name: Aemeth Terminal ${{ needs.meta.outputs.tag }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            artifacts/*.zip
+            artifacts/*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
