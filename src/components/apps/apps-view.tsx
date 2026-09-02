@@ -228,11 +228,20 @@ function AppTable({
                     {running && session?.healthy !== undefined && (
                       <span
                         className={cn(
-                          "size-1.5 rounded-full",
-                          session!.healthy ? "bg-state-running" : "bg-state-error",
+                          "inline-flex items-center gap-1 rounded-sm px-1.5 py-px font-mono text-[10px]",
+                          session!.healthy
+                            ? "bg-state-running/10 text-state-running"
+                            : "bg-state-error/10 text-state-error",
                         )}
-                        title={session!.healthy ? t.status.healthy : t.status.unhealthy}
-                      />
+                      >
+                        <span
+                          className={cn(
+                            "size-1.5 rounded-full",
+                            session!.healthy ? "bg-state-running" : "bg-state-error",
+                          )}
+                        />
+                        {session!.healthy ? t.status.healthy : t.status.unhealthy}
+                      </span>
                     )}
                     {exited && isScript && session && (
                       <span className="text-[10.5px] text-[#666]">

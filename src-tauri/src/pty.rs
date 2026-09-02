@@ -324,6 +324,38 @@ impl PtyManager {
         self.ensure_ports_ticker(&app);
         self.ensure_health_ticker(&app);
 
+        // Trigger an immediate health check for this session.
+        if spec.health_check_url.is_some() {
+            let manager = self.clone();
+            let app_handle = app.clone();
+            let sid = session_id.clone();
+            let aid = spec.app_id.clone();
+            let url = spec.health_check_url.clone().unwrap_or_default();
+            std::thread::Builder::new()
+                .name(format!("health-init-{sid}"))
+                .spawn(move || {
+                    let client = reqwest::blocking::Client::builder()
+                        .timeout(Duration::from_secs(5))
+                        .danger_accept_invalid_certs(true)
+                        .build()
+                        .expect("build reqwest client");
+                    let healthy = client
+                        .get(&url)
+                        .send()
+                        .map(|r| r.status().is_success())
+                        .unwrap_or(false);
+                    manager.inner.health_last.lock().insert(sid.clone(), healthy);
+                    let _ = app_handle.emit(
+                        crate::health::EVENT_HEALTH,
+                        crate::health::HealthEvent {
+                            session_id: sid,
+                            app_id: aid,
+                            healthy,
+                        },
+                    );
+                })?;
+        }
+
         // Preset command scheduler: types the configured lines into the shell.
         if !spec.commands.is_empty() {
             let handle = scheduler_handle;
