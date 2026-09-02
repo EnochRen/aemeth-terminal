@@ -170,7 +170,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
     const apps = ((await store.get<AppConfig[]>(APPS_KEY)) ?? []).map((a) => ({
       ...a,
       kind: a.kind ?? "service",
-    })).sort((a, b) => a.sortOrder - b.sortOrder || a.createdAt - b.createdAt);
+    }));
     const shells = await shellsDetect().catch(() => [] as ShellInfo[]);
     set({ apps, shells, hydrated: true, locale, settings });
 
@@ -253,9 +253,20 @@ export const useAppStore = create<AppState>()((set, get) => ({
       // `sessionRegistry.start` flips the status to "starting" before awaiting
       // the backend, so the UI reacts on this tick even though we await here.
       const client = await sessionRegistry.start(app);
+      // Bump sortOrder so "recent" sort surfaces this app at the top.
+      const maxOrder = Math.max(0, ...get().apps.map((a) => a.sortOrder));
+      const apps = get().apps.map((a) =>
+        a.id === appId ? { ...a, sortOrder: maxOrder + 1 } : a,
+      );
       set((s) => ({
+        apps,
         sessions: { ...s.sessions, [appId]: client.status },
       }));
+      // Persist the bumped order.
+      const store = await getStore();
+      await store.set(APPS_KEY, apps);
+      await store.save();
+
       if (focus) get().openTerminal(appId);
       else {
         set((s) => ({

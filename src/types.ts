@@ -101,6 +101,9 @@ export interface ProcessDetail {
   diskWriteBytes: number;
 }
 
+/** Sort strategy for the application list. */
+export type AppsSortMode = "recent" | "name";
+
 export interface AppSettings {
   terminalFontSize: number;
   scrollback: number;
@@ -111,6 +114,12 @@ export interface AppSettings {
   appsViewMode: "card" | "table";
   /** Whether to automatically download and install updates. */
   autoUpdate: boolean;
+  /** Sort strategy for the application list. */
+  appsSortMode: AppsSortMode;
+  /** When true, the current sort is reversed (Z→A / oldest first). */
+  appsSortAsc: boolean;
+  /** User-defined ordering of tag filter chips (does not include the "all" chip). */
+  tagOrder: string[];
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -121,6 +130,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultShell: "auto",
   appsViewMode: "card",
   autoUpdate: true,
+  appsSortMode: "recent",
+  appsSortAsc: false,
+  tagOrder: [],
 };
 
 export const APP_COLORS = [
