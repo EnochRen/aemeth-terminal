@@ -3,6 +3,7 @@ mod ports;
 mod procs;
 mod pty;
 mod shells;
+mod update;
 
 use pty::{AppSpec, PtyManager, SessionStatus};
 use shells::ShellInfo;
@@ -120,7 +121,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(update::UpdateState::default())
         .manage(manager.clone())
         .invoke_handler(tauri::generate_handler![
             pty_start,
@@ -136,7 +137,14 @@ pub fn run() {
             process_detail,
             close_force,
             shutdown_sessions,
-            open_url
+            open_url,
+            update::get_app_version,
+            update::get_update_target,
+            update::update_cancel,
+            update::update_download,
+            update::update_extract,
+            update::update_apply,
+            update::update_relaunch
         ])
         // Native close guard. If a JS `onCloseRequested` listener were
         // registered instead, Tauri would unconditionally veto the native
