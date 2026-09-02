@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="./assets/screenshot.png" alt="Aemeth Terminal — 截图" width="800" />
+
 # Aemeth Terminal
 
 **面向开发者的多终端服务启动器与终端工作台。**
@@ -17,6 +19,10 @@
 </div>
 
 ---
+
+<p align="center">
+  <img src="./src-tauri/icons/128x128.png" alt="Aemeth 图标" width="64" />
+</p>
 
 ## 为什么做 Aemeth？
 

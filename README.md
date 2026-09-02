@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="./assets/screenshot.png" alt="Aemeth Terminal — screenshot" width="800" />
+
 # Aemeth Terminal
 
 **A multi-session service launcher & terminal workbench for developers.**
@@ -17,6 +19,10 @@ One card per service — preset the shell, working directory, and boot commands,
 </div>
 
 ---
+
+<p align="center">
+  <img src="./src-tauri/icons/128x128.png" alt="Aemeth icon" width="64" />
+</p>
 
 ## Why Aemeth?
 
