@@ -1,8 +1,6 @@
 <div align="center">
 
-<img src="./assets/screenshot.png" alt="Aemeth Terminal — screenshot" width="800" />
-
-# Aemeth Terminal
+# <img src="./src-tauri/icons/128x128.png" alt="Aemeth icon" width="40" /> Aemeth Terminal
 
 **A multi-session service launcher & terminal workbench for developers.**
 
@@ -16,15 +14,9 @@ One card per service — preset the shell, working directory, and boot commands,
 
 [English](./README.md) · [简体中文](./README.zh-CN.md)
 
+<img src="./assets/screenshot.png" alt="Aemeth Terminal — screenshot" width="800" />
+
 </div>
-
----
-
-<p align="center">
-  <img src="./src-tauri/icons/128x128.png" alt="Aemeth icon" width="64" />
-</p>
-
-## Why Aemeth?
 
 Running a microservice stack locally usually means juggling a dozen console windows, each with its own `cd` + `yarn dev` ritual. Aemeth turns every service into an **app card** with a preset boot sequence — one click brings the whole stack up, and a tabbed terminal workbench keeps every session a keystroke away.
 

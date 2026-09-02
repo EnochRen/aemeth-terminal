@@ -1,8 +1,6 @@
 <div align="center">
 
-<img src="./assets/screenshot.png" alt="Aemeth Terminal — 截图" width="800" />
-
-# Aemeth Terminal
+# <img src="./src-tauri/icons/128x128.png" alt="Aemeth 图标" width="40" /> Aemeth Terminal
 
 **面向开发者的多终端服务启动器与终端工作台。**
 
@@ -16,15 +14,9 @@
 
 [English](./README.md) · [简体中文](./README.zh-CN.md)
 
+<img src="./assets/screenshot.png" alt="Aemeth Terminal — 截图" width="800" />
+
 </div>
-
----
-
-<p align="center">
-  <img src="./src-tauri/icons/128x128.png" alt="Aemeth 图标" width="64" />
-</p>
-
-## 为什么做 Aemeth？
 
 在本地跑一套微服务，往往意味着同时开着十几个控制台窗口，每个都要重复一遍 `cd` + `yarn dev` 的手工仪式。Aemeth 把每个服务变成一张**应用卡片**，预设好完整的启动序列——一键拉起整个服务栈；标签式终端工作台让每个会话都只差一个快捷键。
 
