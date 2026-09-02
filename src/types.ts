@@ -101,6 +101,8 @@ export interface AppSettings {
   defaultShell: ShellKind | "auto";
   /** Apps page layout preference. */
   appsViewMode: "card" | "table";
+  /** Whether to automatically download and install updates. */
+  autoUpdate: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -110,6 +112,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   confirmClose: true,
   defaultShell: "auto",
   appsViewMode: "card",
+  autoUpdate: true,
 };
 
 export const APP_COLORS = [
@@ -122,3 +125,23 @@ export const APP_COLORS = [
   "#12a594",
   "#d6409f",
 ] as const;
+
+// --------------- Updater types ---------------
+
+export interface UpdateInfo {
+  hasUpdate: boolean;
+  versionName: string;
+  releaseNote: string;
+  downloadUrl?: string;
+  fileSize?: number;
+  filename?: string;
+}
+
+export interface DownloadProgress {
+  downloadedSize: number;
+  totalSize: number;
+  speed: number;
+  progress: number; // 0-100
+}
+
+export type DownloadStatus = "idle" | "downloading" | "completed" | "failed";

@@ -21,3 +21,6 @@ pnpm-debug.log*
 
 # Build info
 *.tsbuildinfo
+
+# Updater keys (private key must never be pushed)
+keys/updater.key
