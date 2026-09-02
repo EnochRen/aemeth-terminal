@@ -1,6 +1,6 @@
 [package]
 name = "aemeth-terminal"
-version = "0.1.0"
+version = "0.2.0"
 description = "Aemeth Terminal — a multi-session service launcher & terminal workbench"
 authors = ["aemeth"]
 edition = "2021"
