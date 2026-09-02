@@ -384,7 +384,7 @@ export function AppDialog() {
                   id="app-health"
                   value={healthCheckUrl}
                   onChange={(e) => setHealthCheckUrl(e.target.value)}
-                  placeholder="http://localhost:5173"
+                  placeholder="http://localhost:3000"
                   className="font-mono text-xs"
                 />
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
@@ -462,7 +462,7 @@ export function AppDialog() {
                   id="app-tags"
                   value={tags}
                   onChange={(e) => setTags(e.target.value)}
-                  placeholder="qa, live"
+                  placeholder="production, staging"
                   className="font-mono text-xs"
                 />
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
