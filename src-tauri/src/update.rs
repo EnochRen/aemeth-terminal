@@ -13,6 +13,8 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
 pub const EVENT_PROGRESS: &str = "download-progress";
+const UPDATE_ENDPOINT: &str =
+    "https://api.github.com/repos/EnochRen/aemeth-terminal/releases/latest";
 
 #[derive(Clone, serde::Serialize)]
 struct ProgressEvent {
@@ -58,30 +60,64 @@ pub fn get_update_target() -> String {
 pub fn check_update() -> Result<Option<CheckResult>, String> {
     let current = env!("CARGO_PKG_VERSION");
     let target = get_update_target_raw();
+    tracing::info!(
+        current_version = current,
+        update_target = %target,
+        endpoint = UPDATE_ENDPOINT,
+        "starting update check"
+    );
 
     let client = reqwest::blocking::Client::builder()
         .user_agent("aemeth-terminal-updater")
         .timeout(std::time::Duration::from_secs(10))
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to create update HTTP client");
+            format!("failed to create HTTP client: {e}")
+        })?;
 
     let resp = client
-        .get("https://api.github.com/repos/EnochRen/aemeth-terminal/releases/latest")
+        .get(UPDATE_ENDPOINT)
         .header("Accept", "application/vnd.github.v3+json")
         .send()
-        .map_err(|e| format!("request failed: {e}"))?;
+        .map_err(|e| {
+            tracing::error!(error = %e, endpoint = UPDATE_ENDPOINT, "update check request failed");
+            format!("request failed: {e}")
+        })?;
 
-    if !resp.status().is_success() {
-        return Err(format!("GitHub API returned {}", resp.status()));
+    let status = resp.status();
+    tracing::info!(%status, "received update check response");
+    if !status.is_success() {
+        tracing::error!(%status, endpoint = UPDATE_ENDPOINT, "GitHub API returned an error");
+        return Err(format!("GitHub API returned {status}"));
     }
 
-    let release: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let release: serde_json::Value = resp.json().map_err(|e| {
+        tracing::error!(error = %e, "failed to decode GitHub release response");
+        format!("failed to decode GitHub release response: {e}")
+    })?;
     let latest = release["tag_name"]
         .as_str()
         .unwrap_or("")
         .trim_start_matches('v');
+    let asset_count = release["assets"].as_array().map_or(0, Vec::len);
+    tracing::info!(
+        latest_version = latest,
+        asset_count,
+        "parsed latest GitHub release"
+    );
+
+    if latest.is_empty() {
+        tracing::error!("GitHub release response did not contain tag_name");
+        return Err("GitHub release response did not contain tag_name".to_string());
+    }
 
     if !is_newer_semver(latest, current) {
+        tracing::info!(
+            current_version = current,
+            latest_version = latest,
+            "application is already up to date"
+        );
         return Ok(None);
     }
 
@@ -90,15 +126,28 @@ pub fn check_update() -> Result<Option<CheckResult>, String> {
 
     let assets = release["assets"]
         .as_array()
-        .ok_or("missing assets in release JSON")?;
+        .ok_or_else(|| {
+            tracing::error!("GitHub release response did not contain an assets array");
+            "missing assets in release JSON".to_string()
+        })?;
 
     for asset in assets {
         let name = asset["name"].as_str().unwrap_or("");
+        tracing::debug!(asset = name, "inspecting release asset");
         if name.contains(&target) && name.ends_with(ext) {
             let download_url = asset["browser_download_url"]
                 .as_str()
                 .map(|s| s.to_string());
             let file_size = asset["size"].as_u64();
+            if download_url.is_none() {
+                tracing::error!(asset = name, "compatible update asset has no download URL");
+            }
+            tracing::info!(
+                asset = name,
+                has_download_url = download_url.is_some(),
+                file_size = ?file_size,
+                "found compatible update asset"
+            );
             return Ok(Some(CheckResult {
                 has_update: true,
                 version: format!("v{latest}"),
@@ -110,6 +159,16 @@ pub fn check_update() -> Result<Option<CheckResult>, String> {
         }
     }
 
+    tracing::warn!(
+        update_target = %target,
+        expected_extension = ext,
+        asset_count = assets.len(),
+        available_assets = ?assets
+            .iter()
+            .filter_map(|asset| asset["name"].as_str())
+            .collect::<Vec<_>>(),
+        "new version exists but no compatible update asset was found"
+    );
     Ok(None)
 }
 
@@ -133,6 +192,7 @@ fn is_newer_semver(latest: &str, current: &str) -> bool {
 
 #[tauri::command]
 pub fn update_cancel(state: tauri::State<UpdateState>) {
+    tracing::info!("cancelling update download");
     state.cancel.store(true, Ordering::SeqCst);
 }
 
@@ -202,16 +262,31 @@ pub fn update_download(
 /// Extract a `.zip` / `.tar.gz` / `.tgz` archive into a temp dir. Returns the dir.
 #[tauri::command]
 pub fn update_extract(archive: String) -> Result<String, String> {
+    tracing::info!(%archive, "starting update extraction");
     let dest = std::env::temp_dir().join("aemeth-update-extract");
     // Start from a clean slate.
-    let _ = std::fs::remove_dir_all(&dest);
-    std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+    if let Err(e) = std::fs::remove_dir_all(&dest) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(error = %e, path = %dest.display(), "failed to remove old extraction directory");
+        }
+    }
+    std::fs::create_dir_all(&dest).map_err(|e| {
+        tracing::error!(error = %e, path = %dest.display(), "failed to create extraction directory");
+        format!("failed to create extraction directory: {e}")
+    })?;
     let lower = archive.to_lowercase();
     if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
-        extract_tar_gz(&archive, &dest.to_str().unwrap_or(""))?;
+        extract_tar_gz(&archive, &dest.to_str().unwrap_or("")).map_err(|e| {
+            tracing::error!(error = %e, archive = %archive, "failed to extract tar archive");
+            e
+        })?;
     } else {
-        extract_zip(&archive, &dest.to_str().unwrap_or(""))?;
+        extract_zip(&archive, &dest.to_str().unwrap_or("")).map_err(|e| {
+            tracing::error!(error = %e, archive = %archive, "failed to extract zip archive");
+            e
+        })?;
     }
+    tracing::info!(path = %dest.display(), "update extraction complete");
     Ok(dest.to_string_lossy().into_owned())
 }
 
@@ -253,27 +328,53 @@ fn extract_tar_gz(tar_path: &str, dest: &str) -> Result<(), String> {
 /// path of the new executable to relaunch.
 #[tauri::command]
 pub fn update_apply(extract_dir: String) -> Result<String, String> {
+    tracing::info!(%extract_dir, "starting update apply");
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let exe_dir = exe.parent().ok_or("cannot resolve exe dir")?;
     let extract = Path::new(&extract_dir);
+    tracing::info!(
+        current_executable = %exe.display(),
+        application_directory = %exe_dir.display(),
+        "resolved update paths"
+    );
 
     // Move the running exe aside so the new one can take its place.
     let old_dir = exe_dir.join("cache").join("old");
-    std::fs::create_dir_all(&old_dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&old_dir).map_err(|e| {
+        tracing::error!(error = %e, path = %old_dir.display(), "failed to create update backup directory");
+        e.to_string()
+    })?;
     if let Some(name) = exe.file_name() {
         let backup = old_dir.join(format!("{}.old", name.to_string_lossy()));
         let _ = std::fs::remove_file(&backup);
-        std::fs::rename(&exe, &backup).map_err(|e| e.to_string())?;
+        std::fs::rename(&exe, &backup).map_err(|e| {
+            tracing::error!(
+                error = %e,
+                source = %exe.display(),
+                backup = %backup.display(),
+                "failed to move current executable to backup"
+            );
+            e.to_string()
+        })?;
     }
 
     // Copy new files over the app directory.
-    copy_dir_contents(extract, exe_dir)?;
+    copy_dir_contents(extract, exe_dir).map_err(|e| {
+        tracing::error!(error = %e, source = %extract.display(), destination = %exe_dir.display(), "failed to copy update files");
+        e
+    })?;
 
     // Prefer the original exe path; fall back to any executable in the dir.
     if exe.exists() {
+        tracing::info!(executable = %exe.display(), "update apply complete");
         return Ok(exe.to_string_lossy().into_owned());
     }
-    find_executable(exe_dir).ok_or_else(|| "new executable not found after update".to_string())
+    let fallback = find_executable(exe_dir).ok_or_else(|| {
+        tracing::error!(directory = %exe_dir.display(), "new executable not found after update");
+        "new executable not found after update".to_string()
+    })?;
+    tracing::info!(executable = %fallback, "update apply complete using fallback executable");
+    Ok(fallback)
 }
 
 fn find_executable(dir: &Path) -> Option<String> {

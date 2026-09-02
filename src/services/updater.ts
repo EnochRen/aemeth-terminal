@@ -47,9 +47,12 @@ export async function checkForUpdate(): Promise<UpdateInfo | null> {
   }
 
   try {
+    log.info("Checking for updates");
     const result = await invoke<CheckResult | null>("check_update");
+    log.info("Update check response:", result);
     if (!result || !result.has_update) {
       const current = await invoke<string>("get_app_version");
+      log.info("No update available; current version:", current);
       return { hasUpdate: false, versionName: current, releaseNote: "" };
     }
 
@@ -62,9 +65,15 @@ export async function checkForUpdate(): Promise<UpdateInfo | null> {
       filename: result.filename,
     };
     pendingUpdate = info;
+    log.info("Update available:", {
+      version: info.versionName,
+      filename: info.filename,
+      fileSize: info.fileSize,
+      hasDownloadUrl: Boolean(info.downloadUrl),
+    });
     return info;
   } catch (err) {
-    log.warn("Update check failed:", err);
+    log.error("Update check failed:", err);
     return null;
   }
 }
@@ -100,10 +109,22 @@ export async function downloadAndInstallUpdate(
     return true;
   }
 
-  if (!pendingUpdate?.downloadUrl || isDownloading) return false;
+  if (!pendingUpdate?.downloadUrl) {
+    log.warn("Cannot download update: no pending download URL");
+    return false;
+  }
+  if (isDownloading) {
+    log.warn("Ignoring download request: another download is already running");
+    return false;
+  }
 
   isDownloading = true;
   onStatus?.("downloading");
+  log.info("Starting update download:", {
+    url: pendingUpdate.downloadUrl,
+    filename: pendingUpdate.filename,
+    fileSize: pendingUpdate.fileSize,
+  });
 
   progressUnlisten?.();
   progressUnlisten = await listen<{
@@ -125,8 +146,11 @@ export async function downloadAndInstallUpdate(
     const archive = await invoke<string>("update_download", {
       url: pendingUpdate.downloadUrl,
     });
+    log.info("Update download complete:", archive);
     const extractDir = await invoke<string>("update_extract", { archive });
+    log.info("Update extraction complete:", extractDir);
     newExePath = await invoke<string>("update_apply", { extractDir });
+    log.info("Update files applied:", newExePath);
     onStatus?.("completed");
     return true;
   } catch (err) {
@@ -147,6 +171,7 @@ export async function restartApp(): Promise<void> {
     log.warn("No new executable to relaunch into");
     return;
   }
+  log.info("Relaunching application:", newExePath);
   await invoke("update_relaunch", { exePath: newExePath });
 }
 
@@ -157,6 +182,7 @@ export async function cancelDownload(): Promise<void> {
     isDownloading = false;
     return;
   }
+  log.info("Cancelling update download");
   await invoke("update_cancel").catch(() => {});
   isDownloading = false;
 }

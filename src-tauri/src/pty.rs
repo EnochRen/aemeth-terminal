@@ -345,16 +345,45 @@ impl PtyManager {
             std::thread::Builder::new()
                 .name(format!("health-init-{sid}"))
                 .spawn(move || {
-                    let client = reqwest::blocking::Client::builder()
+                    let client = match reqwest::blocking::Client::builder()
                         .timeout(Duration::from_secs(5))
                         .danger_accept_invalid_certs(true)
                         .build()
-                        .expect("build reqwest client");
-                    let ok = client
-                        .get(&url)
-                        .send()
-                        .map(|r| r.status().is_success())
-                        .unwrap_or(false);
+                    {
+                        Ok(client) => client,
+                        Err(error) => {
+                            tracing::error!(
+                                %sid,
+                                %aid,
+                                %error,
+                                "failed to create initial health check client"
+                            );
+                            return;
+                        }
+                    };
+                    let ok = match client.get(&url).send() {
+                        Ok(response) => {
+                            let status = response.status();
+                            if !status.is_success() {
+                                tracing::warn!(
+                                    %sid,
+                                    %aid,
+                                    %status,
+                                    "initial health check returned an unhealthy status"
+                                );
+                            }
+                            status.is_success()
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                %sid,
+                                %aid,
+                                %error,
+                                "initial health check request failed"
+                            );
+                            false
+                        }
+                    };
                     manager.inner.health_last.lock().insert(sid.clone(), ok);
                     let _ = app_handle.emit(
                         crate::health::EVENT_HEALTH,
@@ -399,7 +428,15 @@ impl PtyManager {
                             };
                         }
                         line.push('\r');
-                        let _ = handle.writer.lock().write_all(line.as_bytes());
+                        if let Err(error) = handle.writer.lock().write_all(line.as_bytes()) {
+                            tracing::error!(
+                                %session_id,
+                                command_index = idx,
+                                %error,
+                                "failed to write preset command to pty"
+                            );
+                            break;
+                        }
                         sleep_ms(preset.delay_ms);
                     }
                 })?;
@@ -410,7 +447,12 @@ impl PtyManager {
 
     /// Forward user input (base64 bytes) to the pty.
     pub fn write(&self, session_id: &str, data_b64: &str) -> anyhow::Result<()> {
-        let data = BASE64.decode(data_b64)?;
+        let data = BASE64
+            .decode(data_b64)
+            .map_err(|error| {
+                tracing::warn!(%session_id, %error, "received invalid base64 pty input");
+                error
+            })?;
         let session = self.session(session_id)?;
         session.writer.lock().write_all(&data)?;
         Ok(())
@@ -418,6 +460,7 @@ impl PtyManager {
 
     pub fn resize(&self, session_id: &str, cols: u16, rows: u16) -> anyhow::Result<()> {
         if cols == 0 || rows == 0 {
+            tracing::debug!(%session_id, cols, rows, "ignored zero-sized pty resize");
             return Ok(());
         }
         let session = self.session(session_id)?;
@@ -573,11 +616,17 @@ impl PtyManager {
         let _ = std::thread::Builder::new()
             .name("health-check".into())
             .spawn(move || {
-                let client = reqwest::blocking::Client::builder()
+                let client = match reqwest::blocking::Client::builder()
                     .timeout(Duration::from_secs(5))
                     .danger_accept_invalid_certs(true)
                     .build()
-                    .expect("build reqwest client");
+                {
+                    Ok(client) => client,
+                    Err(error) => {
+                        tracing::error!(%error, "failed to create health check client");
+                        return;
+                    }
+                };
                 loop {
                     std::thread::sleep(Duration::from_secs(15));
                     crate::health::poll_sessions(

@@ -32,13 +32,27 @@ pub fn poll_sessions(
         if url.is_empty() {
             continue;
         }
-        let healthy = client
-            .get(&url)
-            .send()
-            .map(|r| r.status().is_success())
-            .unwrap_or(false);
+        let healthy = match client.get(&url).send() {
+            Ok(response) => {
+                let status = response.status();
+                if !status.is_success() {
+                    tracing::warn!(%session_id, %app_id, %status, "health check returned an unhealthy status");
+                }
+                status.is_success()
+            }
+            Err(error) => {
+                tracing::warn!(%session_id, %app_id, %error, "health check request failed");
+                false
+            }
+        };
         let prev = last.insert(session_id.clone(), healthy);
         if prev != Some(healthy) {
+            tracing::info!(
+                %session_id,
+                %app_id,
+                healthy,
+                "health status changed"
+            );
             let _ = app.emit(
                 EVENT_HEALTH,
                 HealthEvent {

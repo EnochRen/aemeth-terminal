@@ -36,7 +36,10 @@ fn pty_write(
     session_id: String,
     data: String,
 ) -> Result<(), String> {
-    manager.write(&session_id, &data).map_err(|e| e.to_string())
+    manager.write(&session_id, &data).map_err(|e| {
+        tracing::error!(%session_id, error = %e, "failed to write to pty session");
+        e.to_string()
+    })
 }
 
 #[tauri::command]
@@ -46,9 +49,10 @@ fn pty_resize(
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    manager
-        .resize(&session_id, cols, rows)
-        .map_err(|e| e.to_string())
+    manager.resize(&session_id, cols, rows).map_err(|e| {
+        tracing::error!(%session_id, cols, rows, error = %e, "failed to resize pty session");
+        e.to_string()
+    })
 }
 
 #[tauri::command]
@@ -70,12 +74,23 @@ fn shells_detect() -> Vec<ShellInfo> {
 
 #[tauri::command]
 fn write_text_file(path: String, content: String) -> Result<(), String> {
-    std::fs::write(path, content).map_err(|e| e.to_string())
+    let bytes = content.len();
+    std::fs::write(&path, content).map_err(|e| {
+        tracing::error!(%path, bytes, error = %e, "failed to write text file");
+        e.to_string()
+    })?;
+    tracing::debug!(%path, bytes, "text file written");
+    Ok(())
 }
 
 #[tauri::command]
 fn read_text_file(path: String) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|e| e.to_string())
+    let result = std::fs::read_to_string(&path).map_err(|e| {
+        tracing::error!(%path, error = %e, "failed to read text file");
+        e.to_string()
+    })?;
+    tracing::debug!(%path, bytes = result.len(), "text file read");
+    Ok(result)
 }
 
 #[tauri::command]
@@ -85,12 +100,19 @@ fn process_list() -> Vec<procs::ProcessInfo> {
 
 #[tauri::command]
 fn process_kill(pid: u32) -> Result<usize, String> {
-    procs::kill_tree(pid)
+    tracing::info!(%pid, "killing process tree");
+    procs::kill_tree(pid).map_err(|e| {
+        tracing::error!(%pid, error = %e, "failed to kill process tree");
+        e
+    })
 }
 
 #[tauri::command]
 fn process_detail(pid: u32) -> Result<procs::ProcessDetail, String> {
-    procs::detail(pid).ok_or_else(|| "process not found".into())
+    procs::detail(pid).ok_or_else(|| {
+        tracing::warn!(%pid, "process detail requested for missing process");
+        "process not found".into()
+    })
 }
 
 /// User confirmed the close-guard dialog: destroy the window natively.
@@ -121,7 +143,11 @@ async fn shutdown_sessions(manager: tauri::State<'_, PtyManager>) -> Result<(), 
 /// Open a URL in the default system browser.
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
-    open::that(&url).map_err(|e| e.to_string())
+    tracing::info!(%url, "opening URL in default browser");
+    open::that(&url).map_err(|e| {
+        tracing::error!(%url, error = %e, "failed to open URL");
+        e.to_string()
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
