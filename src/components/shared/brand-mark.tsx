@@ -11,9 +11,8 @@ export function BrandMark({ className }: { className?: string }) {
         "flex shrink-0 items-center justify-center rounded-[5px] border border-[#333]",
         className,
       )}
-      aria-hidden
     >
-      <svg viewBox="0 0 64 64" className="size-[70%] pointer-events-none" aria-hidden="true">
+      <svg viewBox="0 0 64 64" className="size-[70%]" aria-hidden="true">
         <path
           d="M17 37.5 H47"
           fill="none"
