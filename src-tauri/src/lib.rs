@@ -150,6 +150,37 @@ fn open_url(url: String) -> Result<(), String> {
     })
 }
 
+#[tauri::command]
+fn open_data_dir(app: tauri::AppHandle) -> Result<(), String> {
+    let path = app.path().app_data_dir().map_err(|e| {
+        tracing::error!(error = %e, "failed to resolve application data directory");
+        e.to_string()
+    })?;
+    std::fs::create_dir_all(&path).map_err(|e| {
+        tracing::error!(path = %path.display(), error = %e, "failed to create application data directory");
+        e.to_string()
+    })?;
+    tracing::info!(path = %path.display(), "opening application data directory");
+    open::that(&path).map_err(|e| {
+        tracing::error!(path = %path.display(), error = %e, "failed to open application data directory");
+        e.to_string()
+    })
+}
+
+#[tauri::command]
+fn open_logs_dir() -> Result<(), String> {
+    let path = logger::logs_dir();
+    std::fs::create_dir_all(&path).map_err(|e| {
+        tracing::error!(path = %path.display(), error = %e, "failed to create logs directory");
+        e.to_string()
+    })?;
+    tracing::info!(path = %path.display(), "opening logs directory");
+    open::that(&path).map_err(|e| {
+        tracing::error!(path = %path.display(), error = %e, "failed to open logs directory");
+        e.to_string()
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     logger::init();
@@ -176,6 +207,8 @@ pub fn run() {
             close_force,
             shutdown_sessions,
             open_url,
+            open_data_dir,
+            open_logs_dir,
             update::check_update,
             update::get_app_version,
             update::get_update_target,

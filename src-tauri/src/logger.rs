@@ -30,7 +30,7 @@ const FILE_PREFIX: &str = "aemeth";
 
 // ── directory resolution ───────────────────────────────────────────────────
 
-fn logs_dir() -> PathBuf {
+pub(crate) fn logs_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("aemeth-terminal")

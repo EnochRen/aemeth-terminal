@@ -13,6 +13,10 @@ import { useT } from "@/i18n/use-t";
 import { useAppStore } from "@/store/use-app-store";
 import { version as appVersion } from "@/../package.json";
 import type { ShellKind } from "@/types";
+import { Button } from "@/components/ui/button";
+import { FolderOpen } from "lucide-react";
+import { openDataDir, openLogsDir } from "@/lib/pty";
+import { toast } from "sonner";
 
 const SCROLLBACK_OPTIONS = [1_000, 5_000, 10_000, 20_000];
 
@@ -85,6 +89,45 @@ export function SettingsView() {
                   checked={settings.confirmClose}
                   onCheckedChange={(v) => void setSettings({ confirmClose: v })}
                 />
+              </Row>
+            </div>
+          </section>
+
+          {/* ---------------- Files ---------------- */}
+          <section className="grid gap-4">
+            <p className="label-micro">{t.settings.files}</p>
+            <div className="divide-y divide-border border-y border-border">
+              <Row label={t.settings.dataFolder} hint={t.settings.dataFolderHint}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    void openDataDir().catch((error) => {
+                      toast.error(t.toasts.openFolderFailed, {
+                        description: error instanceof Error ? error.message : String(error),
+                      });
+                    })
+                  }
+                >
+                  <FolderOpen />
+                  {t.settings.openFolder}
+                </Button>
+              </Row>
+              <Row label={t.settings.logsFolder} hint={t.settings.logsFolderHint}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    void openLogsDir().catch((error) => {
+                      toast.error(t.toasts.openFolderFailed, {
+                        description: error instanceof Error ? error.message : String(error),
+                      });
+                    })
+                  }
+                >
+                  <FolderOpen />
+                  {t.settings.openFolder}
+                </Button>
               </Row>
             </div>
           </section>

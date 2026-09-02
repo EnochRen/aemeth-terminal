@@ -74,6 +74,14 @@ export function openUrl(url: string): Promise<void> {
   return invoke("open_url", { url });
 }
 
+export function openDataDir(): Promise<void> {
+  return invoke("open_data_dir");
+}
+
+export function openLogsDir(): Promise<void> {
+  return invoke("open_logs_dir");
+}
+
 export function listenCloseBlocked(handler: (running: number) => void): Promise<UnlistenFn> {
   return listen<number>(CLOSE_BLOCKED_EVENT, (e) => handler(e.payload));
 }
