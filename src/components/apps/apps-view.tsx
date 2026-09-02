@@ -6,7 +6,7 @@ import { AppActionsMenu } from "@/components/apps/app-actions-menu";
 import { AppCard } from "@/components/apps/app-card";
 import { BrandMark } from "@/components/shared/brand-mark";
 import { ShellBadge } from "@/components/shared/shell-badge";
-import { StatusPill, StatusDot } from "@/components/shared/status-pill";
+import { StatusPill } from "@/components/shared/status-pill";
 import { Button } from "@/components/ui/button";
 import { openUrl } from "@/lib/pty";
 import { fmt } from "@/i18n/locales";
@@ -224,7 +224,6 @@ function AppTable({
                 {/* Status */}
                 <td className="px-2 py-1.5">
                   <div className="flex items-center gap-1.5">
-                    <StatusDot session={session} />
                     <StatusPill session={session} />
                     {running && session?.healthy !== undefined && (
                       <span
