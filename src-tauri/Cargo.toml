@@ -33,7 +33,9 @@ uuid = { version = "1", features = ["v4"] }
 dirs = "6"
 which = "8"
 anyhow = "1"
-log = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+chrono = "0.4"
 open = "5"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 flate2 = "1"

@@ -302,6 +302,12 @@ impl PtyManager {
                     // The reaper owns the child exclusively — no lock needed.
                     let exit_code = child.wait().ok().map(|st| st.exit_code());
                     let killed = handle.killed.load(Ordering::SeqCst);
+                    tracing::info!(
+                        %session_id,
+                        exit_code = ?exit_code,
+                        killed,
+                        "session reaper: process exited",
+                    );
                     // A force-killed process exits with garbage (0xFFFFFFFF
                     // on Windows). User-initiated kills are reported as a
                     // clean 0, Electron-style — no scary exit codes in the UI.
@@ -363,6 +369,11 @@ impl PtyManager {
 
         // Preset command scheduler: types the configured lines into the shell.
         if !spec.commands.is_empty() {
+            tracing::info!(
+                session_id = %session_id,
+                count = spec.commands.len(),
+                "scheduling preset commands",
+            );
             let handle = scheduler_handle;
             let shell = spec.shell;
             let startup_delay = spec.startup_delay_ms;
@@ -475,6 +486,7 @@ impl PtyManager {
     /// Terminate everything — used on application exit.
     pub fn close_all(&self) {
         let ids: Vec<String> = self.inner.sessions.lock().keys().cloned().collect();
+        tracing::info!(count = ids.len(), "closing all sessions");
         for id in ids {
             self.close(&id);
         }

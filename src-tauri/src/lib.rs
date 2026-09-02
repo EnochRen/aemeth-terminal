@@ -1,4 +1,5 @@
 mod health;
+mod logger;
 mod ports;
 mod procs;
 mod pty;
@@ -20,7 +21,13 @@ fn pty_start(
     app: tauri::AppHandle,
     spec: AppSpec,
 ) -> Result<SessionStatus, String> {
-    manager.start(&app, spec).map_err(|e| e.to_string())
+    tracing::info!(app_id = %spec.app_id, name = %spec.name, "starting pty session");
+    let status = manager.start(&app, spec).map_err(|e| {
+        tracing::error!(error = %e, "failed to start pty session");
+        e.to_string()
+    })?;
+    tracing::info!(session_id = %status.session_id, pid = ?status.pid, "pty session started");
+    Ok(status)
 }
 
 #[tauri::command]
@@ -46,6 +53,7 @@ fn pty_resize(
 
 #[tauri::command]
 fn pty_close(manager: tauri::State<PtyManager>, session_id: String) -> Result<(), String> {
+    tracing::info!(%session_id, "closing pty session");
     manager.close(&session_id);
     Ok(())
 }
@@ -99,12 +107,14 @@ fn close_force(window: tauri::Window, manager: tauri::State<PtyManager>) {
 /// the window. Called by the frontend's shutdown overlay before `close_force`.
 #[tauri::command]
 async fn shutdown_sessions(manager: tauri::State<'_, PtyManager>) -> Result<(), String> {
+    tracing::info!("shutting down all sessions");
     let manager = manager.inner().clone();
     let _ = tauri::async_runtime::spawn_blocking(move || {
         manager.close_all();
         manager.wait_idle(std::time::Duration::from_secs(5));
     })
     .await;
+    tracing::info!("all sessions shut down");
     Ok(())
 }
 
@@ -116,6 +126,8 @@ fn open_url(url: String) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    logger::init();
+
     let manager = PtyManager::new();
 
     let app = tauri::Builder::default()
@@ -173,6 +185,7 @@ pub fn run() {
     app.run(move |_handle, event| {
         // Make sure no stray shells keep running after the window closes.
         if let tauri::RunEvent::ExitRequested { .. } = event {
+            tracing::info!("app exit requested, closing all sessions");
             manager.close_all();
         }
     });
