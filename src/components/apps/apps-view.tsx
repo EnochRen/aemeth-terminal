@@ -4,6 +4,7 @@ import { LayoutGrid, List, Play, Square, Loader2 } from "lucide-react";
 import { AppActionButtons } from "@/components/apps/app-action-buttons";
 import { AppActionsMenu } from "@/components/apps/app-actions-menu";
 import { AppCard } from "@/components/apps/app-card";
+import { BrandMark } from "@/components/shared/brand-mark";
 import { ShellBadge } from "@/components/shared/shell-badge";
 import { StatusPill, StatusDot } from "@/components/shared/status-pill";
 import { Button } from "@/components/ui/button";
@@ -310,9 +311,7 @@ function EmptyState() {
   const openEditor = useAppStore((s) => s.openEditor);
   return (
     <div className="flex h-full flex-col items-center justify-center gap-5 text-center">
-      <div className="flex size-9 items-center justify-center rounded-md border border-[#333] font-mono text-sm text-foreground">
-        Æ
-      </div>
+      <BrandMark className="size-9 rounded-md" />
       <div className="space-y-1.5">
         <p className="label-micro">{t.apps.emptyLabel}</p>
         <p className="mx-auto max-w-sm text-[12.5px] leading-relaxed text-[#a1a1a1]">

@@ -7,6 +7,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { TitleBar } from "@/components/layout/title-bar";
 import { ProcessesView } from "@/components/processes/processes-view";
 import { SettingsView } from "@/components/settings/settings-view";
+import { BrandMark } from "@/components/shared/brand-mark";
 import { TerminalsView } from "@/components/terminals/terminals-view";
 import {
   AlertDialog,
@@ -127,9 +128,7 @@ function BootScreen() {
   const t = useT();
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4">
-      <div className="flex size-8 items-center justify-center rounded-md border border-[#333] font-mono text-sm text-foreground">
-        Æ
-      </div>
+      <BrandMark className="size-8 rounded-md" />
       <p className="label-micro">{t.app.loading}</p>
     </div>
   );

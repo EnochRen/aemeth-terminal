@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Copy, Minus, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+import { BrandMark } from "@/components/shared/brand-mark";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useT } from "@/i18n/use-t";
 import { cn } from "@/lib/utils";
@@ -37,9 +38,7 @@ export function TitleBar() {
     <header className="flex h-10 shrink-0 select-none items-stretch border-b border-border bg-black">
       {/* Drag region + brand */}
       <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center gap-2.5 pl-3">
-        <span className="flex size-5 items-center justify-center rounded-[5px] border border-[#333] font-mono text-[10px] font-medium text-foreground">
-          Æ
-        </span>
+        <BrandMark className="size-5" />
         <span className="truncate font-mono text-[11px] tracking-wide text-[#a1a1a1]">
           Aemeth Terminal
         </span>
