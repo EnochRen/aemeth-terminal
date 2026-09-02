@@ -1,5 +1,6 @@
 import { Cpu, LayoutGrid, Plus, Settings, SquareTerminal } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { UpdateButton } from "@/components/layout/update-button";
 import { useT } from "@/i18n/use-t";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/use-app-store";
@@ -43,6 +44,7 @@ export function Sidebar() {
       </nav>
 
       <div className="mt-auto flex flex-col items-center gap-1">
+        <UpdateButton />
         <RailButton label={t.sidebar.newApp} onClick={() => openEditor(null)}>
           <Plus className="size-4" strokeWidth={1.75} />
         </RailButton>

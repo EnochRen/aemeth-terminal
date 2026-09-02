@@ -11,6 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { LOCALES, type Locale } from "@/i18n/locales";
 import { useT } from "@/i18n/use-t";
 import { useAppStore } from "@/store/use-app-store";
+import { version as appVersion } from "@/../package.json";
 import type { ShellKind } from "@/types";
 
 const SCROLLBACK_OPTIONS = [1_000, 5_000, 10_000, 20_000];
@@ -130,6 +131,22 @@ export function SettingsView() {
                   checked={settings.copyOnSelect}
                   onCheckedChange={(v) => void setSettings({ copyOnSelect: v })}
                 />
+              </Row>
+            </div>
+          </section>
+
+          {/* ---------------- Updates ---------------- */}
+          <section className="grid gap-4">
+            <p className="label-micro">Updates</p>
+            <div className="divide-y divide-border border-y border-border">
+              <Row label={t.settings.autoUpdate} hint={t.settings.autoUpdateHint}>
+                <Switch
+                  checked={settings.autoUpdate}
+                  onCheckedChange={(v) => void setSettings({ autoUpdate: v })}
+                />
+              </Row>
+              <Row label="Version">
+                <span className="font-mono text-xs text-[#a1a1a1]">{appVersion}</span>
               </Row>
             </div>
           </section>
