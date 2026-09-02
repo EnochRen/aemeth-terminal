@@ -5,6 +5,7 @@ import {
   Copy,
   Eraser,
   FileDown,
+  Loader2,
   Search,
   SquareCheckBig,
 } from "lucide-react";
@@ -134,6 +135,16 @@ export function TerminalPane({ appId, active }: TerminalPaneProps) {
       </ContextMenu>
 
       {searchOpen && <TerminalSearch client={client} onClose={closeSearch} />}
+
+      {/* Stopping overlay — shown while the kill signal is in flight */}
+      {session?.state === "stopping" && active && (
+        <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center">
+          <div className="flex items-center gap-2 rounded-md border border-border bg-[#0a0a0a] px-3 py-1.5">
+            <Loader2 className="size-3 animate-spin text-state-warn" />
+            <span className="font-mono text-[11px] text-[#a1a1a1]">{t.status.stopping}</span>
+          </div>
+        </div>
+      )}
 
       {/* Exited overlay */}
       {session?.state === "exited" && active && (

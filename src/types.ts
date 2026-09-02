@@ -39,7 +39,15 @@ export interface AppConfig {
   updatedAt: number;
 }
 
-export type SessionState = "running" | "exited";
+/**
+ * Lifecycle of a PTY session.
+ *
+ * `running` and `exited` are authoritative — they originate from the Rust
+ * backend. `starting` and `stopping` are frontend-only optimistic states held
+ * between a user action and the backend event that confirms it, so the UI can
+ * show progress without blocking on IPC.
+ */
+export type SessionState = "running" | "exited" | "starting" | "stopping";
 
 export interface SessionStatus {
   sessionId: string;

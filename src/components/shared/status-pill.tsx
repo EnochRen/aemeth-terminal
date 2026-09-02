@@ -1,3 +1,4 @@
+import { Loader2 } from "lucide-react";
 import { useT } from "@/i18n/use-t";
 import { cn } from "@/lib/utils";
 import type { SessionStatus } from "@/types";
@@ -25,6 +26,14 @@ export function StatusPill({ session, className }: StatusPillProps) {
       </span>
     );
   }
+  if (session.state === "starting" || session.state === "stopping") {
+    return (
+      <span className={cn("inline-flex items-center gap-1.5 font-mono text-xs text-state-warn", className)}>
+        <Loader2 className="size-3 animate-spin" />
+        {session.state === "starting" ? t.status.starting : t.status.stopping}
+      </span>
+    );
+  }
   const failed = session.exitCode !== 0 && session.exitCode !== undefined;
   return (
     <span className={cn("inline-flex items-center gap-2 font-mono text-xs text-muted-foreground", className)}>
@@ -39,6 +48,9 @@ export function StatusDot({ session, className }: StatusPillProps) {
   if (!session) return <span className={cn("size-1.5 rounded-full bg-state-idle", className)} />;
   if (session.state === "running") {
     return <span className={cn("size-1.5 rounded-full bg-state-running", className)} />;
+  }
+  if (session.state === "starting" || session.state === "stopping") {
+    return <Loader2 className={cn("size-3 animate-spin text-state-warn", className)} />;
   }
   const failed = session.exitCode !== 0 && session.exitCode !== undefined;
   return (

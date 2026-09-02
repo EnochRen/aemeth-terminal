@@ -1,4 +1,4 @@
-import { Play, SquareTerminal } from "lucide-react";
+import { Loader2, Play, SquareTerminal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n/use-t";
@@ -21,10 +21,22 @@ export function AppActionButtons({
 
   const running = session?.state === "running";
   const exited = session?.state === "exited";
+  const transitioning = session?.state === "starting" || session?.state === "stopping";
+  const starting = session?.state === "starting";
   const isScript = app.kind === "script";
 
   const h = size === "sm" ? "h-6" : "h-7";
   const text = size === "sm" ? "text-[10px]" : "text-xs";
+
+  // A transition is in flight — both app kinds render the same disabled spinner.
+  if (transitioning) {
+    return (
+      <Button size="sm" disabled className={`${h} gap-1.5 px-2.5 ${text}`}>
+        <Loader2 className="size-3 animate-spin" />
+        {starting ? t.card.starting : t.card.stopping}
+      </Button>
+    );
+  }
 
   if (isScript) {
     if (running) {

@@ -32,6 +32,7 @@ export function AppActionsMenu({
   const requestDelete = useAppStore((s) => s.requestDelete);
 
   const running = session?.state === "running";
+  const transitioning = session?.state === "starting" || session?.state === "stopping";
 
   return (
     <DropdownMenu>
@@ -45,12 +46,12 @@ export function AppActionsMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-40">
-        {running && (
+        {(running || transitioning) && (
           <>
-            <DropdownMenuItem onClick={() => void stopApp(app.id)}>
+            <DropdownMenuItem disabled={!running} onClick={() => void stopApp(app.id)}>
               <Square className="size-3.5" /> {t.card.stop}
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => void restartApp(app.id)}>
+            <DropdownMenuItem disabled={!running} onClick={() => void restartApp(app.id)}>
               <RotateCcw className="size-3.5" /> {t.card.restart}
             </DropdownMenuItem>
             <DropdownMenuSeparator />

@@ -247,7 +247,11 @@ export const useAppStore = create<AppState>()((set, get) => ({
       if (focus) get().openTerminal(appId);
       return;
     }
+    // Ignore clicks while a transition is already in flight.
+    if (current?.state === "starting" || current?.state === "stopping") return;
     try {
+      // `sessionRegistry.start` flips the status to "starting" before awaiting
+      // the backend, so the UI reacts on this tick even though we await here.
       const client = await sessionRegistry.start(app);
       set((s) => ({
         sessions: { ...s.sessions, [appId]: client.status },
@@ -260,6 +264,12 @@ export const useAppStore = create<AppState>()((set, get) => ({
       }
     } catch (err) {
       if (err instanceof Error && err.message === "already starting") return;
+      // Roll the optimistic "starting" back so the card is actionable again.
+      set((s) => {
+        const sessions = { ...s.sessions };
+        if (sessions[appId]?.state === "starting") delete sessions[appId];
+        return { sessions };
+      });
       toast.error(fmt(dictionaries[get().locale].toasts.startFailed, { name: app.name }), {
         description: err instanceof Error ? err.message : String(err),
       });
@@ -267,12 +277,19 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
 
   stopApp: async (appId) => {
-    await sessionRegistry.stop(appId);
+    const current = get().sessions[appId];
+    if (!current || current.state !== "running") return;
+    // Deliberately not awaited: `stop` flips the status to "stopping" on this
+    // tick, and the reaper's exit event converges it to "exited". Awaiting the
+    // kill here would block the click handler for the duration of the syscall.
+    void sessionRegistry.stop(appId);
   },
 
   restartApp: async (appId) => {
     const app = get().apps.find((a) => a.id === appId);
     if (!app) return;
+    const current = get().sessions[appId];
+    if (current?.state === "starting" || current?.state === "stopping") return;
     try {
       const client = await sessionRegistry.restart(app);
       set((s) => ({
@@ -282,6 +299,11 @@ export const useAppStore = create<AppState>()((set, get) => ({
         view: "terminals",
       }));
     } catch (err) {
+      set((s) => {
+        const sessions = { ...s.sessions };
+        if (sessions[appId]?.state === "starting") delete sessions[appId];
+        return { sessions };
+      });
       toast.error(fmt(dictionaries[get().locale].toasts.restartFailed, { name: app.name }), {
         description: err instanceof Error ? err.message : String(err),
       });
@@ -304,13 +326,10 @@ export const useAppStore = create<AppState>()((set, get) => ({
     if (get().batchState) return;
     set({ batchState: "stopping" });
     try {
-      for (const appId of appIds) {
-        const session = get().sessions[appId];
-        if (session?.state === "running") {
-          await sessionRegistry.stop(appId);
-          await new Promise((r) => setTimeout(r, 150));
-        }
-      }
+      // Kills are independent — dispatch them together instead of serialising
+      // behind an arbitrary delay.
+      const running = appIds.filter((id) => get().sessions[id]?.state === "running");
+      await Promise.all(running.map((id) => sessionRegistry.stop(id)));
     } finally {
       set({ batchState: null });
     }
@@ -342,6 +361,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
       return { openTabs, activeAppId };
     });
     const session = get().sessions[appId];
+    // Not awaited: the tab is already gone from the UI, and the session is torn
+    // down below regardless of when the kill lands.
     if (session?.state === "running") void sessionRegistry.stop(appId);
     sessionRegistry.remove(appId);
     set((s) => {

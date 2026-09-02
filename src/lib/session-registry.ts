@@ -52,6 +52,14 @@ const XTERM_THEME = {
 
 const FLUSH_INTERVAL_MS = 8;
 
+/**
+ * Placeholder sessionId for the optimistic `starting` status emitted before the
+ * backend has spawned the PTY. Such a status is only ever handed to UI
+ * subscribers; it is never stored in the `clients` map, so sessionId-keyed
+ * event handlers cannot resolve it.
+ */
+const PENDING_SESSION_ID = "";
+
 export class SessionClient {
   readonly app: AppConfig;
   status: SessionStatus;
@@ -346,6 +354,19 @@ class SessionRegistry {
     if (this.starting.has(app.id)) throw new Error("already starting");
     this.starting.add(app.id);
     try {
+      // Flip the UI to "starting" before the backend round-trip so the click
+      // feels instant. `sessionId` is empty until the backend assigns one —
+      // this status is display-only and is never keyed into `clients`, so the
+      // sessionId-based event listeners cannot match it.
+      this.emitStatus(app.id, {
+        sessionId: PENDING_SESSION_ID,
+        appId: app.id,
+        name: app.name,
+        shell: app.shell,
+        state: "starting",
+        startedAt: Date.now(),
+      });
+
       const status = await ptyStart({
         appId: app.id,
         name: app.name,
@@ -371,11 +392,18 @@ class SessionRegistry {
     }
   }
 
+  /**
+   * Request a kill and return immediately after the optimistic status flip.
+   *
+   * The returned promise resolves once the kill signal has been delivered to
+   * the backend — not once the process is gone. Callers that need the UI to
+   * stay responsive must not await it; the final `exited` state arrives via
+   * the reaper's `pty://exit` event.
+   */
   async stop(appId: string): Promise<void> {
     const client = this.getByApp(appId);
     if (!client || client.status.state !== "running") return;
-    // Mark as exited immediately so re-start creates a new session.
-    client.status = { ...client.status, state: "exited", killed: true };
+    client.status = { ...client.status, state: "stopping" };
     this.emitStatus(appId, client.status);
     await ptyClose(client.sessionId).catch(() => {});
   }
@@ -388,7 +416,14 @@ class SessionRegistry {
     this.appToSession.delete(appId);
   }
 
+  /**
+   * Kill the current session (if any) and spawn a fresh one.
+   *
+   * The kill is awaited before `remove()` so the reaper still finds the client
+   * and the old process tree is gone before a new one binds the same ports.
+   */
   async restart(app: AppConfig): Promise<SessionClient> {
+    await this.stop(app.id);
     this.remove(app.id);
     return this.start(app);
   }
