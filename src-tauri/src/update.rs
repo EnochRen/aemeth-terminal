@@ -12,13 +12,28 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter};
 
-pub const EVENT_PROGRESS: &str = "aemeth://update-progress";
+pub const EVENT_PROGRESS: &str = "download-progress";
 
 #[derive(Clone, serde::Serialize)]
 struct ProgressEvent {
-    downloaded: u64,
-    total: u64,
+    session_id: u64,
+    downloaded_size: u64,
+    total_size: u64,
+    speed: u64,
+    progress: f64,
 }
+
+#[derive(Clone, serde::Serialize)]
+pub struct CheckResult {
+    has_update: bool,
+    version: String,
+    body: String,
+    download_url: Option<String>,
+    file_size: Option<u64>,
+    filename: Option<String>,
+}
+
+static DOWNLOAD_SESSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Shared cancel flag for an in-flight download.
 #[derive(Default, Clone)]
@@ -35,21 +50,85 @@ pub fn get_app_version() -> String {
 /// e.g. `win-x86_64`, `macos-aarch64`, `linux-x86_64`.
 #[tauri::command]
 pub fn get_update_target() -> String {
-    let os = if cfg!(target_os = "windows") {
-        "win"
-    } else if cfg!(target_os = "macos") {
-        "macos"
-    } else {
-        "linux"
-    };
-    let arch = if cfg!(target_arch = "x86_64") {
-        "x86_64"
-    } else if cfg!(target_arch = "aarch64") {
-        "aarch64"
-    } else {
-        "unknown"
-    };
+    get_update_target_raw()
+}
+
+/// Check GitHub Releases for a newer version. Returns None if up-to-date.
+#[tauri::command]
+pub fn check_update() -> Result<Option<CheckResult>, String> {
+    let current = env!("CARGO_PKG_VERSION");
+    let target = get_update_target_raw();
+
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("aemeth-terminal-updater")
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp = client
+        .get("https://api.github.com/repos/EnochRen/aemeth-terminal/releases/latest")
+        .header("Accept", "application/vnd.github.v3+json")
+        .send()
+        .map_err(|e| format!("request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("GitHub API returned {}", resp.status()));
+    }
+
+    let release: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let latest = release["tag_name"]
+        .as_str()
+        .unwrap_or("")
+        .trim_start_matches('v');
+
+    if !is_newer_semver(latest, current) {
+        return Ok(None);
+    }
+
+    let is_win = target.starts_with("win");
+    let ext = if is_win { ".zip" } else { ".tar.gz" };
+
+    let assets = release["assets"]
+        .as_array()
+        .ok_or("missing assets in release JSON")?;
+
+    for asset in assets {
+        let name = asset["name"].as_str().unwrap_or("");
+        if name.contains(&target) && name.ends_with(ext) {
+            let download_url = asset["browser_download_url"]
+                .as_str()
+                .map(|s| s.to_string());
+            let file_size = asset["size"].as_u64();
+            return Ok(Some(CheckResult {
+                has_update: true,
+                version: format!("v{latest}"),
+                body: release["body"].as_str().unwrap_or("").to_string(),
+                download_url,
+                file_size,
+                filename: Some(name.to_string()),
+            }));
+        }
+    }
+
+    Ok(None)
+}
+
+fn get_update_target_raw() -> String {
+    let os = if cfg!(target_os = "windows") { "win" } else if cfg!(target_os = "macos") { "macos" } else { "linux" };
+    let arch = if cfg!(target_arch = "x86_64") { "x86_64" } else if cfg!(target_arch = "aarch64") { "aarch64" } else { "unknown" };
     format!("{os}-{arch}")
+}
+
+fn is_newer_semver(latest: &str, current: &str) -> bool {
+    let a: Vec<u32> = latest.split('.').filter_map(|s| s.parse().ok()).collect();
+    let b: Vec<u32> = current.split('.').filter_map(|s| s.parse().ok()).collect();
+    for i in 0..3 {
+        let va = a.get(i).copied().unwrap_or(0);
+        let vb = b.get(i).copied().unwrap_or(0);
+        if va > vb { return true; }
+        if va < vb { return false; }
+    }
+    false
 }
 
 #[tauri::command]
@@ -65,6 +144,8 @@ pub fn update_download(
     url: String,
 ) -> Result<String, String> {
     state.cancel.store(false, Ordering::SeqCst);
+    tracing::info!(%url, "starting update download");
+    let session_id = DOWNLOAD_SESSION.fetch_add(1, Ordering::SeqCst) + 1;
 
     let client = reqwest::blocking::Client::builder()
         .user_agent("aemeth-terminal-updater")
@@ -91,6 +172,7 @@ pub fn update_download(
 
     loop {
         if state.cancel.load(Ordering::SeqCst) {
+            tracing::info!("update download cancelled by user");
             let _ = std::fs::remove_file(&dest);
             return Err("cancelled".to_string());
         }
@@ -100,9 +182,20 @@ pub fn update_download(
         }
         file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
         downloaded += n as u64;
-        let _ = app.emit(EVENT_PROGRESS, ProgressEvent { downloaded, total });
+        let progress = if total > 0 { (downloaded as f64 / total as f64) * 100.0 } else { 0.0 };
+        let _ = app.emit(
+            EVENT_PROGRESS,
+            ProgressEvent {
+                session_id,
+                downloaded_size: downloaded,
+                total_size: total,
+                speed: 0,
+                progress,
+            },
+        );
     }
 
+    tracing::info!(downloaded, path = %dest.display(), "update download complete");
     Ok(dest.to_string_lossy().into_owned())
 }
 
@@ -222,6 +315,7 @@ fn copy_dir_contents(src: &Path, dst: &Path) -> Result<(), String> {
 /// Spawn the new executable detached, then exit the current process.
 #[tauri::command]
 pub fn update_relaunch(manager: tauri::State<crate::pty::PtyManager>, exe_path: String) {
+    tracing::info!(%exe_path, "relaunching with new executable");
     // Make sure no stray shells survive the swap.
     manager.close_all();
     manager.wait_idle(std::time::Duration::from_secs(3));

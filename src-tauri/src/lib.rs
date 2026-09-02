@@ -150,6 +150,7 @@ pub fn run() {
             close_force,
             shutdown_sessions,
             open_url,
+            update::check_update,
             update::get_app_version,
             update::get_update_target,
             update::update_cancel,

@@ -1,20 +1,13 @@
 /**
  * Portable zip-based auto-updater (MXU-style).
  *
- * Queries the GitHub Releases API for the latest tag, picks the asset that
- * matches the current platform (`get_update_target`), downloads it with
- * streamed progress, extracts it, swaps the executable and relaunches.
- *
- * This replaces `tauri-plugin-updater`, which only understands signed
- * installer bundles and therefore could never work with our zip-only releases.
+ * Mirrors MistEO/MXU's approach: update check happens in Rust (reqwest,
+ * bypassing webview fetch limitations), download streams progress via an
+ * event, then the extracted zip swaps the executable and relaunches.
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { DownloadProgress, DownloadStatus, UpdateInfo } from "@/types";
-
-const GITHUB_OWNER = "EnochRen";
-const GITHUB_REPO = "aemeth-terminal";
-const RELEASES_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
 
 const log = {
   info: (...args: unknown[]) => console.log("[updater]", ...args),
@@ -22,15 +15,13 @@ const log = {
   error: (...args: unknown[]) => console.error("[updater]", ...args),
 };
 
-interface GitHubAsset {
-  name: string;
-  browser_download_url: string;
-  size: number;
-}
-interface GitHubRelease {
-  tag_name: string;
-  body: string | null;
-  assets: GitHubAsset[];
+interface CheckResult {
+  has_update: boolean;
+  version: string;
+  body: string;
+  download_url?: string;
+  file_size?: number;
+  filename?: string;
 }
 
 /** The update we last resolved, used by download/install. */
@@ -41,19 +32,8 @@ let isDownloading = false;
 let progressUnlisten: UnlistenFn | null = null;
 let devSimulationAborted = false;
 
-function isNewer(latest: string, current: string): boolean {
-  const a = latest.split(".").map((n) => parseInt(n, 10) || 0);
-  const b = current.split(".").map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < 3; i++) {
-    if ((a[i] ?? 0) > (b[i] ?? 0)) return true;
-    if ((a[i] ?? 0) < (b[i] ?? 0)) return false;
-  }
-  return false;
-}
-
 /** Check GitHub Releases for a newer version, return structured info. */
 export async function checkForUpdate(): Promise<UpdateInfo | null> {
-  // In dev mode there is no real release pipeline — simulate for UI testing.
   if (import.meta.env.DEV) {
     log.info("Dev mode: simulating an available update for UI testing");
     const info: UpdateInfo = {
@@ -67,48 +47,25 @@ export async function checkForUpdate(): Promise<UpdateInfo | null> {
   }
 
   try {
-    const [current, target] = await Promise.all([
-      invoke<string>("get_app_version"),
-      invoke<string>("get_update_target"),
-    ]);
-
-    const res = await fetch(RELEASES_API, {
-      headers: { Accept: "application/vnd.github+json" },
-    });
-    if (!res.ok) {
-      log.warn("Release API responded", res.status);
-      return null;
-    }
-    const release = (await res.json()) as GitHubRelease;
-    const latest = release.tag_name.replace(/^v/, "");
-
-    if (!isNewer(latest, current)) {
-      return { hasUpdate: false, versionName: current, releaseNote: "" };
-    }
-
-    const isWindows = target.startsWith("win");
-    const ext = isWindows ? ".zip" : ".tar.gz";
-    const asset = release.assets.find(
-      (a) => a.name.includes(target) && a.name.endsWith(ext),
-    );
-    if (!asset) {
-      log.warn("No matching asset for target", target);
+    const result = await invoke<CheckResult | null>("check_update");
+    if (!result || !result.has_update) {
+      const current = await invoke<string>("get_app_version");
       return { hasUpdate: false, versionName: current, releaseNote: "" };
     }
 
     const info: UpdateInfo = {
       hasUpdate: true,
-      versionName: release.tag_name,
-      releaseNote: release.body ?? "",
-      downloadUrl: asset.browser_download_url,
-      fileSize: asset.size,
-      filename: asset.name,
+      versionName: result.version,
+      releaseNote: result.body ?? "",
+      downloadUrl: result.download_url,
+      fileSize: result.file_size,
+      filename: result.filename,
     };
     pendingUpdate = info;
     return info;
   } catch (err) {
     log.warn("Update check failed:", err);
-    return null; // null = network error, distinct from "no update"
+    return null;
   }
 }
 
@@ -120,7 +77,6 @@ export async function downloadAndInstallUpdate(
   onProgress?: (progress: DownloadProgress) => void,
   onStatus?: (status: DownloadStatus) => void,
 ): Promise<boolean> {
-  // Dev mode: simulate a download with fake progress.
   if (import.meta.env.DEV) {
     isDownloading = true;
     onStatus?.("downloading");
@@ -149,20 +105,21 @@ export async function downloadAndInstallUpdate(
   isDownloading = true;
   onStatus?.("downloading");
 
-  // Stream download progress from the backend.
   progressUnlisten?.();
-  progressUnlisten = await listen<{ downloaded: number; total: number }>(
-    "aemeth://update-progress",
-    (e) => {
-      const { downloaded, total } = e.payload;
-      onProgress?.({
-        downloadedSize: downloaded,
-        totalSize: total,
-        speed: 0,
-        progress: total > 0 ? (downloaded / total) * 100 : 0,
-      });
-    },
-  );
+  progressUnlisten = await listen<{
+    session_id: number;
+    downloaded_size: number;
+    total_size: number;
+    speed: number;
+    progress: number;
+  }>("download-progress", (e) => {
+    onProgress?.({
+      downloadedSize: e.payload.downloaded_size,
+      totalSize: e.payload.total_size,
+      speed: e.payload.speed,
+      progress: e.payload.progress,
+    });
+  });
 
   try {
     const archive = await invoke<string>("update_download", {
@@ -190,7 +147,6 @@ export async function restartApp(): Promise<void> {
     log.warn("No new executable to relaunch into");
     return;
   }
-  // Does not return on success — the process exits after spawning the new exe.
   await invoke("update_relaunch", { exePath: newExePath });
 }
 
