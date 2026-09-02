@@ -222,6 +222,10 @@ const zh = {
     autoUpdateHint: "启动时检查新版本并自动下载",
   },
   update: {
+    updates: "更新",
+    checkUpdate: "检查更新",
+    checking: "检查中...",
+    checkAgain: "重新检查",
     newVersion: "新版本",
     currentVersion: "当前版本",
     releaseNotes: "更新日志",
@@ -462,6 +466,10 @@ const en: Dict = {
     autoUpdateHint: "Check for new versions on startup and download automatically",
   },
   update: {
+    updates: "Updates",
+    checkUpdate: "Check for updates",
+    checking: "Checking...",
+    checkAgain: "Check again",
     newVersion: "New version",
     currentVersion: "Current version",
     releaseNotes: "Release notes",

@@ -1,11 +1,11 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import {
   Download,
   X,
   PackageCheck,
   RefreshCw,
   AlertCircle,
-  ArrowBigUp,
+  ChevronUp,
   Loader2,
 } from "lucide-react";
 import {
@@ -29,15 +29,14 @@ import { dictionaries } from "@/i18n/locales";
 
 /**
  * Bottom-left sidebar icon that opens a popover.
- * User clicks "Check for updates" → popover shows result.
- * If an update is available: version info, release notes, download progress.
+ * Popover: "Check for updates" button → shows result.
+ * If update available: version, release notes, download progress, restart.
  *
- * Design reference: MaaEnd / MXU approach, simplified for GitHub-only.
+ * Design reference: MaaEnd / MXU approach, simplified for GitHub-only public repos.
  */
 export function UpdateButton() {
   const t = useT();
   const settings = useAppStore((s) => s.settings);
-  const locale = useAppStore((s) => s.locale);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [downloadStatus, setDownloadStatus] = useState<DownloadStatus>("idle");
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
@@ -47,32 +46,32 @@ export function UpdateButton() {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const d = dictionaries[locale];
-
-  // ─── Background check on mount (for auto-update) ───
+  // ─── Auto-check on mount (for auto-update) ───
   useEffect(() => {
     void (async () => {
       const info = await checkForUpdate();
-      if (!info) return;
+      if (!info || !info.hasUpdate) return;
 
-      if (info.hasUpdate && settings.autoUpdate) {
-        setUpdateInfo(info);
+      setUpdateInfo(info);
+
+      if (settings.autoUpdate) {
         const ok = await downloadAndInstallUpdate(
           (p) => setDownloadProgress(p),
           (s) => setDownloadStatus(s),
         );
         if (ok) {
-          toast.success(d.update.restartToApply, {
-            action: {
-              label: d.update.restart,
-              onClick: () => void restartApp(),
-            },
-            duration: 0,
-          });
+          // Use setTimeout to read latest toast strings after locale might change
+          setTimeout(() => {
+            const cur = dictionaries[useAppStore.getState().locale];
+            toast.success(cur.update.restartToApply, {
+              action: {
+                label: cur.update.restart,
+                onClick: () => void restartApp(),
+              },
+              duration: 0,
+            });
+          }, 0);
         }
-      } else if (info.hasUpdate) {
-        // Just flag the icon, don't auto-download
-        setUpdateInfo(info);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -81,7 +80,8 @@ export function UpdateButton() {
   // ─── Click-outside & ESC handling ───
   useEffect(() => {
     if (!panelOpen) return;
-    const handler = (e: MouseEvent) => {
+
+    const onMouseDown = (e: MouseEvent) => {
       if (
         panelRef.current &&
         !panelRef.current.contains(e.target as Node) &&
@@ -91,14 +91,15 @@ export function UpdateButton() {
         setPanelOpen(false);
       }
     };
-    const keyHandler = (e: KeyboardEvent) => {
+    const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") setPanelOpen(false);
     };
-    document.addEventListener("mousedown", handler);
-    document.addEventListener("keydown", keyHandler);
+
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
     return () => {
-      document.removeEventListener("mousedown", handler);
-      document.removeEventListener("keydown", keyHandler);
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
     };
   }, [panelOpen]);
 
@@ -112,12 +113,7 @@ export function UpdateButton() {
       toast.error(t.update.checkFailed);
       return;
     }
-
-    if (info.hasUpdate) {
-      setUpdateInfo(info);
-    } else {
-      setUpdateInfo(info); // hasUpdate: false, show "up to date" in panel
-    }
+    setUpdateInfo(info);
   }, [t.update.checkFailed]);
 
   // ─── Manual download ───
@@ -128,17 +124,17 @@ export function UpdateButton() {
       (s) => setDownloadStatus(s),
     );
     if (ok) {
-      toast.success(d.update.restartToApply, {
+      toast.success(t.update.restartToApply, {
         action: {
-          label: d.update.restart,
+          label: t.update.restart,
           onClick: () => void restartApp(),
         },
         duration: 0,
       });
     } else {
-      toast.error(d.update.downloadFailed);
+      toast.error(t.update.downloadFailed);
     }
-  }, [d]);
+  }, [t.update]);
 
   // ─── Cancel download ───
   const handleCancelDownload = useCallback(async () => {
@@ -147,9 +143,10 @@ export function UpdateButton() {
     setDownloadProgress(null);
   }, []);
 
-  // ─── Simple markdown → HTML (###, **, `, -, numbers) ───
-  const renderMarkdown = (md: string): string => {
-    return md
+  // ─── Markdown → HTML (memoized, not re-created every render) ───
+  const releaseNoteHtml = useMemo(() => {
+    if (!updateInfo?.releaseNote) return null;
+    return updateInfo.releaseNote
       .replace(/### (.+)/gm,
         "<h4 class='text-[12px] font-semibold text-foreground mt-3 mb-1'>$1</h4>")
       .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
@@ -159,15 +156,15 @@ export function UpdateButton() {
       .replace(/^- (.+)/gm, "• $1")
       .replace(/^(\d+)\. (.+)/gm, "$1. $2")
       .replace(/\n\n/g, "<br/><br/>");
-  };
+  }, [updateInfo?.releaseNote]);
 
-  // ─── Render ───
-  const hasUpdate = updateInfo?.hasUpdate;
+  // ─── Derived state ───
+  const hasUpdate = updateInfo?.hasUpdate ?? false;
   const showBadge = hasUpdate && downloadStatus === "idle";
 
   return (
     <>
-      {/* Button — always shows refresh icon, badge when update available */}
+      {/* ── Sidebar button ── */}
       <Tooltip>
         <TooltipTrigger asChild>
           <button
@@ -179,10 +176,9 @@ export function UpdateButton() {
               "hover:bg-accent hover:text-foreground",
               panelOpen && "bg-accent text-foreground",
             )}
-            aria-label={t.update.badgeLabel}
+            aria-label={t.update.checkUpdate}
           >
             <RefreshCw className="size-4" strokeWidth={1.75} />
-            {/* Badge dot when update is available but not downloaded yet */}
             {showBadge && (
               <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-state-running ring-1 ring-[#000]" />
             )}
@@ -193,63 +189,61 @@ export function UpdateButton() {
             ? `${t.update.downloading} ${downloadProgress ? Math.round(downloadProgress.progress) : 0}%`
             : hasUpdate
               ? t.update.badgeLabel
-              : t.sidebar.settings}
+              : t.update.checkUpdate}
         </TooltipContent>
       </Tooltip>
 
-      {/* Popover */}
+      {/* ── Popover panel ── */}
       {panelOpen && (
         <div
           ref={panelRef}
-          className="fixed z-50 w-80 bg-[#0e0e0e] rounded-xl shadow-xl border border-border overflow-hidden animate-in slide-in-from-left"
-          style={{
-            left: "4rem",
-            bottom: "4rem",
-          }}
+          className="fixed z-50 w-80 bg-[#0e0e0e] rounded-xl shadow-xl border border-border overflow-hidden"
+          style={{ left: "4rem", bottom: "4rem" }}
         >
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 bg-[#141414] border-b border-border">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-0">
               {hasUpdate ? (
-                <ArrowBigUp className="size-4 text-state-running" />
+                <ChevronUp className="size-4 shrink-0 text-state-running" />
               ) : (
-                <RefreshCw className="size-4 text-accent" />
+                <RefreshCw className="size-4 shrink-0 text-accent" />
               )}
-              <span className="text-[13px] font-medium text-foreground">
-                {hasUpdate ? t.update.newVersion : "Updates"}
+              <span className="text-[13px] font-medium text-foreground truncate">
+                {hasUpdate ? t.update.newVersion : t.update.updates}
               </span>
               {hasUpdate && (
-                <span className="font-mono text-[13px] text-accent font-semibold">
+                <span className="font-mono text-[13px] text-accent font-semibold shrink-0">
                   {updateInfo!.versionName}
                 </span>
               )}
             </div>
             <button
               onClick={() => setPanelOpen(false)}
-              className="p-1 rounded-md hover:bg-border/50 transition-colors"
+              className="p-1 rounded-md hover:bg-border/50 transition-colors shrink-0 ml-2"
+              aria-label="Close"
             >
               <X className="size-3.5 text-[#666]" />
             </button>
           </div>
 
-          {/* Content */}
+          {/* Body */}
           <div className="p-4 space-y-4">
-            {/* No result yet → show check button */}
+            {/* No result yet → check button */}
             {!updateInfo && (
               <button
                 onClick={handleCheck}
                 disabled={checking}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-medium bg-accent text-white hover:brightness-110 transition-colors disabled:opacity-50"
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-medium bg-accent text-white hover:brightness-110 disabled:opacity-50 transition-colors"
               >
                 {checking ? (
                   <>
                     <Loader2 className="size-3.5 animate-spin" />
-                    Checking...
+                    {t.update.checking}
                   </>
                 ) : (
                   <>
                     <RefreshCw className="size-3.5" />
-                    Check for updates
+                    {t.update.checkUpdate}
                   </>
                 )}
               </button>
@@ -259,19 +253,19 @@ export function UpdateButton() {
             {updateInfo && !hasUpdate && (
               <div className="space-y-3">
                 <p className="text-xs text-[#a1a1a1] text-center">
-                  {t.update.upToDate.replace("{version}", updateInfo.versionName || `v${settings.autoUpdate ? "?" : ""}`)}
+                  {t.update.upToDate.replace("{version}", updateInfo.versionName || "—")}
                 </p>
                 <button
                   onClick={handleCheck}
                   disabled={checking}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-medium text-[#a1a1a1] bg-[#141414] border border-border hover:bg-[#1a1a1a] transition-colors disabled:opacity-50"
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-medium text-[#a1a1a1] bg-[#141414] border border-border hover:text-foreground hover:bg-[#1a1a1a] disabled:opacity-50 transition-colors"
                 >
                   {checking ? (
                     <Loader2 className="size-3.5 animate-spin" />
                   ) : (
                     <RefreshCw className="size-3.5" />
                   )}
-                  Check again
+                  {t.update.checkAgain}
                 </button>
               </div>
             )}
@@ -280,7 +274,7 @@ export function UpdateButton() {
             {updateInfo?.hasUpdate && (
               <>
                 {/* Release notes */}
-                {updateInfo.releaseNote && (
+                {releaseNoteHtml && (
                   <div className="space-y-2">
                     <p className="text-[11px] font-medium text-[#888] uppercase tracking-wider">
                       {t.update.releaseNotes}
@@ -288,15 +282,13 @@ export function UpdateButton() {
                     <div className="max-h-32 overflow-y-auto rounded-lg bg-[#141414] border border-border p-3">
                       <div
                         className="text-xs text-[#a1a1a1] leading-relaxed whitespace-pre-wrap break-words"
-                        dangerouslySetInnerHTML={{
-                          __html: renderMarkdown(updateInfo.releaseNote),
-                        }}
+                        dangerouslySetInnerHTML={{ __html: releaseNoteHtml }}
                       />
                     </div>
                   </div>
                 )}
 
-                {/* Download controls */}
+                {/* Download section */}
                 <div className="space-y-2 border-t border-border pt-3">
                   {/* Progress bar */}
                   {(downloadStatus === "downloading" || downloadStatus === "completed") &&
@@ -333,6 +325,7 @@ export function UpdateButton() {
                             <button
                               onClick={handleCancelDownload}
                               className="text-[#666] hover:text-foreground transition-colors"
+                              aria-label="Cancel download"
                             >
                               <X className="size-3" />
                             </button>
@@ -341,7 +334,7 @@ export function UpdateButton() {
                       </div>
                     )}
 
-                  {/* Failed state */}
+                  {/* Failed */}
                   {downloadStatus === "failed" && (
                     <div className="flex items-center gap-2 text-[11px] text-[#e5484d]">
                       <AlertCircle className="size-3.5 shrink-0" />
@@ -349,9 +342,9 @@ export function UpdateButton() {
                     </div>
                   )}
 
-                  {/* Action buttons */}
+                  {/* Action button */}
                   <div className="flex gap-2">
-                    {downloadStatus === "completed" ? (
+                    {downloadStatus === "completed" && (
                       <button
                         onClick={() => void restartApp()}
                         className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-state-running text-white hover:brightness-110 transition-colors"
@@ -359,7 +352,8 @@ export function UpdateButton() {
                         <PackageCheck className="size-3.5" />
                         {t.update.restart}
                       </button>
-                    ) : downloadStatus === "idle" ? (
+                    )}
+                    {downloadStatus === "idle" && (
                       <button
                         onClick={handleStartDownload}
                         className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-accent text-white hover:brightness-110 transition-colors"
@@ -367,7 +361,8 @@ export function UpdateButton() {
                         <Download className="size-3.5" />
                         {t.update.installNow}
                       </button>
-                    ) : downloadStatus === "failed" ? (
+                    )}
+                    {downloadStatus === "failed" && (
                       <button
                         onClick={handleStartDownload}
                         className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-accent text-white hover:brightness-110 transition-colors"
@@ -375,7 +370,7 @@ export function UpdateButton() {
                         <RefreshCw className="size-3.5" />
                         {t.update.retry}
                       </button>
-                    ) : null}
+                    )}
                   </div>
                 </div>
               </>
