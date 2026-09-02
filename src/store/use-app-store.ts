@@ -267,12 +267,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
 
   stopApp: async (appId) => {
-    const current = get().sessions[appId];
-    if (!current || current.state !== "running") return;
-    // Immediately mark as stopping so the UI updates, then kill the pty.
-    set((s) => ({
-      sessions: { ...s.sessions, [appId]: { ...current, state: "exited", killed: true } },
-    }));
     await sessionRegistry.stop(appId);
   },
 

@@ -307,8 +307,9 @@ class SessionRegistry {
       client.status = { ...client.status, ports };
       for (const listener of this.portsListeners) listener(client.app.id, ports);
     });
-    await listenHealth(({ appId, healthy }) => {
-      const client = this.getByApp(appId);
+    await listenHealth(({ sessionId, appId, healthy }) => {
+      // Try sessionId first (always unique), fall back to appId.
+      const client = this.clients.get(sessionId) ?? this.getByApp(appId);
       if (!client) return;
       client.status = { ...client.status, healthy };
       for (const listener of this.healthListeners) listener(appId, healthy);
@@ -372,9 +373,11 @@ class SessionRegistry {
 
   async stop(appId: string): Promise<void> {
     const client = this.getByApp(appId);
-    if (client && client.status.state === "running") {
-      await ptyClose(client.sessionId).catch(() => {});
-    }
+    if (!client || client.status.state !== "running") return;
+    // Mark as exited immediately so re-start creates a new session.
+    client.status = { ...client.status, state: "exited", killed: true };
+    this.emitStatus(appId, client.status);
+    await ptyClose(client.sessionId).catch(() => {});
   }
 
   remove(appId: string): void {

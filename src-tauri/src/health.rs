@@ -10,6 +10,7 @@ use crate::pty::{self, PtyManager};
 pub const EVENT_HEALTH: &str = "aemeth://health";
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HealthEvent {
     pub session_id: String,
     pub app_id: String,
