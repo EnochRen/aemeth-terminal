@@ -43,6 +43,7 @@ export function TerminalPane({ appId, active }: TerminalPaneProps) {
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
+  const [hoverTop, setHoverTop] = useState(false);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -146,34 +147,56 @@ export function TerminalPane({ appId, active }: TerminalPaneProps) {
         </div>
       )}
 
-      {/* Exited overlay */}
-      {session?.state === "exited" && active && (
-        <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center">
-          <div className="pointer-events-auto flex items-center gap-3 rounded-md border border-border bg-[#0a0a0a] px-3 py-1.5">
-            <span className="font-mono text-[11px] text-[#a1a1a1]">
-              {app?.kind === "script" ? t.pane.done : t.pane.exited}
-              {session.exitCode !== undefined
-                ? ` · ${fmt(t.pane.code, { code: session.exitCode })}`
-                : ""}
-              {session.durationMs !== undefined
-                ? ` · ${fmt(t.pane.duration, { t: (session.durationMs / 1000).toFixed(1) })}`
-                : ""}
-            </span>
-            <span className="h-3 w-px bg-border" />
-            <button
-              type="button"
-              onClick={() => void restartApp(appId)}
-              className="font-mono text-[11px] text-foreground underline decoration-[#333] underline-offset-4 hover:decoration-foreground"
+      {/* Session control overlay — hover at top when running; always visible when exited */}
+      {(session?.state === "running" || session?.state === "exited") && active && (
+        <div
+          className="absolute inset-x-0 top-0 z-20 h-10"
+          onMouseEnter={() => setHoverTop(true)}
+          onMouseLeave={() => setHoverTop(false)}
+        >
+          <div
+            className={cn(
+              "pointer-events-none flex justify-center pt-3 transition-opacity duration-200",
+              session.state === "exited" || hoverTop ? "opacity-100" : "opacity-0",
+            )}
+          >
+            <div
+              className={cn(
+                "flex items-center gap-3 rounded-md border border-border bg-[#0a0a0a] px-3 py-1.5",
+                session.state === "exited" || hoverTop
+                  ? "pointer-events-auto"
+                  : "pointer-events-none",
+              )}
             >
-              {app?.kind === "script" ? t.pane.rerun : t.pane.restart}
-            </button>
-            <button
-              type="button"
-              onClick={() => closeTab(appId)}
-              className="font-mono text-[11px] text-[#666] underline decoration-[#333] underline-offset-4 hover:text-foreground"
-            >
-              {t.pane.close}
-            </button>
+              <span className="font-mono text-[11px] text-[#a1a1a1]">
+                {session.state === "running"
+                  ? t.status.running
+                  : app?.kind === "script"
+                    ? t.pane.done
+                    : t.pane.exited}
+                {session.state === "exited" && session.exitCode !== undefined
+                  ? ` · ${fmt(t.pane.code, { code: session.exitCode })}`
+                  : ""}
+                {session.state === "exited" && session.durationMs !== undefined
+                  ? ` · ${fmt(t.pane.duration, { t: (session.durationMs / 1000).toFixed(1) })}`
+                  : ""}
+              </span>
+              <span className="h-3 w-px bg-border" />
+              <button
+                type="button"
+                onClick={() => void restartApp(appId)}
+                className="font-mono text-[11px] text-foreground underline decoration-[#333] underline-offset-4 hover:decoration-foreground"
+              >
+                {app?.kind === "script" ? t.pane.rerun : t.pane.restart}
+              </button>
+              <button
+                type="button"
+                onClick={() => closeTab(appId)}
+                className="font-mono text-[11px] text-[#666] underline decoration-[#333] underline-offset-4 hover:text-foreground"
+              >
+                {t.pane.close}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -5,6 +5,9 @@ import { useT } from "@/i18n/use-t";
 import { useAppStore } from "@/store/use-app-store";
 import type { AppConfig } from "@/types";
 
+const PRIMARY_W = "w-[96px]";
+const SECONDARY_W = "w-[108px]";
+
 /** Start / stop / view-output buttons shared by card and table rows. */
 export function AppActionButtons({
   app,
@@ -27,103 +30,65 @@ export function AppActionButtons({
 
   const h = size === "sm" ? "h-6" : "h-7";
   const text = size === "sm" ? "text-[10px]" : "text-xs";
+  const primaryClass = `${h} gap-1.5 px-2 ${text} ${PRIMARY_W} justify-center`;
+  const stopClass = `${primaryClass} border-transparent bg-state-error text-white hover:bg-state-error/90`;
+  const viewOutputClass = `${h} gap-1.5 px-2 ${text} ${SECONDARY_W} justify-center text-[#a1a1a1]`;
 
-  // A transition is in flight — both app kinds render the same disabled spinner.
   if (transitioning) {
     return (
-      <Button size="sm" disabled className={`${h} gap-1.5 px-2.5 ${text}`}>
+      <Button size="sm" disabled className={primaryClass}>
         <Loader2 className="size-3 animate-spin" />
         {starting ? t.card.starting : t.card.stopping}
       </Button>
     );
   }
 
-  if (isScript) {
-    if (running) {
-      return (
-        <>
-          <Button
-            size="sm"
-            className={`${h} gap-1.5 px-2.5 ${text}`}
-            onClick={() => void openTerminal(app.id)}
-          >
-            <SquareTerminal className="size-3.5" /> {t.card.viewOutput}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className={`${h} px-2.5 ${text} text-[#a1a1a1]`}
-            onClick={() => void stopApp(app.id)}
-          >
-            {t.card.stop}
-          </Button>
-        </>
-      );
-    }
+  const viewOutputBtn = (
+    <Button
+      size="sm"
+      variant="ghost"
+      className={viewOutputClass}
+      onClick={() => void openTerminal(app.id)}
+    >
+      <SquareTerminal className="size-3.5" /> {t.card.viewOutput}
+    </Button>
+  );
+
+  if (running) {
     return (
-      <>
-        <Button
-          size="sm"
-          className={`${h} gap-1.5 px-2.5 ${text}`}
-          onClick={() => void startApp(app.id)}
-        >
-          <Play className="size-3" /> {exited ? t.card.rerun : t.card.run}
+      <div className="flex items-center justify-end gap-1">
+        {viewOutputBtn}
+        <Button size="sm" className={stopClass} onClick={() => void stopApp(app.id)}>
+          {t.card.stop}
         </Button>
-        {exited && (
-          <Button
-            size="sm"
-            variant="ghost"
-            className={`${h} gap-1.5 px-2.5 ${text} text-[#a1a1a1]`}
-            onClick={() => void openTerminal(app.id)}
-          >
-            {t.card.viewOutput}
-          </Button>
-        )}
-      </>
+      </div>
     );
   }
 
-  // service-type app
-  if (running) {
+  if (exited) {
     return (
-      <>
+      <div className="flex items-center justify-end gap-1">
+        {viewOutputBtn}
         <Button
           size="sm"
-          className={`${h} gap-1.5 px-2.5 ${text}`}
-          onClick={() => void openTerminal(app.id)}
+          className={primaryClass}
+          onClick={() => void startApp(app.id)}
         >
-          <SquareTerminal className="size-3.5" /> {t.card.openTerminal}
+          <Play className="size-3" />
+          {isScript ? t.card.rerun : t.card.restart}
         </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className={`${h} px-2.5 ${text} text-[#a1a1a1]`}
-          onClick={() => void stopApp(app.id)}
-        >
-          {t.card.stop}
-        </Button>
-      </>
+      </div>
     );
   }
+
   return (
-    <>
-      <Button
-        size="sm"
-        className={`${h} gap-1.5 px-2.5 ${text}`}
-        onClick={() => void startApp(app.id)}
-      >
-        <Play className="size-3" /> {exited ? t.card.restart : t.card.start}
-      </Button>
-      {exited && (
-        <Button
-          size="sm"
-          variant="ghost"
-          className={`${h} gap-1.5 px-2.5 ${text} text-[#a1a1a1]`}
-          onClick={() => void openTerminal(app.id)}
-        >
-          {t.card.viewOutput}
-        </Button>
-      )}
-    </>
+    <Button
+      size="sm"
+      className={primaryClass}
+      onClick={() => void startApp(app.id)}
+    >
+      <Play className="size-3" />
+      {isScript ? t.card.run : t.card.start}
+    </Button>
   );
 }

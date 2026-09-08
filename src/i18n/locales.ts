@@ -38,7 +38,6 @@ const zh = {
     createFirst: "创建第一个应用",
   },
   card: {
-    openTerminal: "打开终端",
     stop: "停止",
     start: "启动",
     run: "执行",
@@ -291,7 +290,6 @@ const en: Dict = {
     createFirst: "Create your first application",
   },
   card: {
-    openTerminal: "Open terminal",
     stop: "Stop",
     start: "Start",
     run: "Run",
