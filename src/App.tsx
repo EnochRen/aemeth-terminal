@@ -36,6 +36,7 @@ export default function App() {
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
+    let disposed = false;
     listenCloseBlocked(() => {
       const s = useAppStore.getState();
       if (s.shuttingDown) return;
@@ -46,10 +47,14 @@ export default function App() {
       }
     })
       .then((fn) => {
-        unlisten = fn;
+        if (disposed) fn();
+        else unlisten = fn;
       })
       .catch(() => {});
-    return () => unlisten?.();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
 
   useShortcuts();
@@ -91,7 +96,7 @@ function CloseConfirmDialog() {
   const setClosePrompt = useAppStore((s) => s.setClosePrompt);
   const shutdownAndExit = useAppStore((s) => s.shutdownAndExit);
   const running = useAppStore(
-    (s) => Object.values(s.sessions).filter((x) => x.state === "running").length,
+    (s) => Object.values(s.sessions).filter((x) => x.state !== "exited").length,
   );
 
   return (
@@ -117,7 +122,7 @@ function ShutdownOverlay() {
   const shuttingDown = useAppStore((s) => s.shuttingDown);
   if (!shuttingDown) return null;
   return (
-    <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-background">
+    <div role="status" aria-live="polite" className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-background">
       <div className="size-5 animate-spin rounded-full border-2 border-border border-t-foreground" />
       <p className="font-mono text-xs text-muted-foreground">{t.app.shuttingDown}</p>
     </div>

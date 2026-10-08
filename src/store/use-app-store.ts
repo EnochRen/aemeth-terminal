@@ -67,7 +67,7 @@ interface AppState {
   batchStartApps: (appIds: string[]) => Promise<void>;
   batchStopApps: (appIds: string[]) => Promise<void>;
   openTerminal: (appId: string) => Promise<void>;
-  closeTab: (appId: string) => void;
+  closeTab: (appId: string) => Promise<void>;
   setActiveTab: (appId: string) => void;
   cycleTab: (dir: 1 | -1) => void;
   jumpTab: (index: number) => void;
@@ -100,10 +100,13 @@ export const useAppStore = create<AppState>()((set, get) => ({
     set({ shuttingDown: true, closePromptOpen: false });
     try {
       await shutdownSessions();
-    } catch {
-      /* best effort — force exit regardless */
+      await forceClose();
+    } catch (error) {
+      set({ shuttingDown: false });
+      toast.error(dictionaries[get().locale].toasts.shutdownFailed, {
+        description: error instanceof Error ? error.message : String(error),
+      });
     }
-    await forceClose().catch(() => {});
   },
 
   setSettings: async (patch) => {
@@ -223,9 +226,16 @@ export const useAppStore = create<AppState>()((set, get) => ({
     if (!target) return;
     set({ deleteTarget: null });
 
-    await sessionRegistry.stop(target.id);
+    try {
+      await sessionRegistry.stop(target.id);
+    } catch (error) {
+      toast.error(fmt(dictionaries[get().locale].toasts.stopFailed, { name: target.name }), {
+        description: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
     sessionRegistry.remove(target.id);
-    get().closeTab(target.id);
+    await get().closeTab(target.id);
 
     const apps = get().apps.filter((a) => a.id !== target.id);
     const sessions = { ...get().sessions };
@@ -240,6 +250,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
 
   startApp: async (appId, focus = true) => {
+    if (get().shuttingDown) return;
     const app = get().apps.find((a) => a.id === appId);
     if (!app) return;
     const current = get().sessions[appId];
@@ -267,6 +278,10 @@ export const useAppStore = create<AppState>()((set, get) => ({
       await store.set(APPS_KEY, apps);
       await store.save();
 
+      // Closing a tab or exiting while startup/persistence is pending must
+      // not reopen that terminal when this continuation resumes.
+      if (get().shuttingDown || sessionRegistry.getByApp(appId) !== client
+        || client.status.state === "stopping") return;
       if (focus) get().openTerminal(appId);
       else {
         set((s) => ({
@@ -274,7 +289,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
         }));
       }
     } catch (err) {
-      if (err instanceof Error && err.message === "already starting") return;
+      if (err instanceof Error && err.message === "already stopping") return;
       // Roll the optimistic "starting" back so the card is actionable again.
       set((s) => {
         const sessions = { ...s.sessions };
@@ -289,14 +304,18 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   stopApp: async (appId) => {
     const current = get().sessions[appId];
-    if (!current || current.state !== "running") return;
-    // Deliberately not awaited: `stop` flips the status to "stopping" on this
-    // tick, and the reaper's exit event converges it to "exited". Awaiting the
-    // kill here would block the click handler for the duration of the syscall.
-    void sessionRegistry.stop(appId);
+    if (!current || current.state === "exited") return;
+    try {
+      await sessionRegistry.stop(appId);
+    } catch (error) {
+      toast.error(fmt(dictionaries[get().locale].toasts.stopFailed, { name: current.name }), {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    }
   },
 
   restartApp: async (appId) => {
+    if (get().shuttingDown) return;
     const app = get().apps.find((a) => a.id === appId);
     if (!app) return;
     const current = get().sessions[appId];
@@ -340,7 +359,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
       // Kills are independent — dispatch them together instead of serialising
       // behind an arbitrary delay.
       const running = appIds.filter((id) => get().sessions[id]?.state === "running");
-      await Promise.all(running.map((id) => sessionRegistry.stop(id)));
+      await Promise.all(running.map((id) => get().stopApp(id)));
     } finally {
       set({ batchState: null });
     }
@@ -361,7 +380,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
     requestAnimationFrame(() => sessionRegistry.getByApp(appId)?.focus());
   },
 
-  closeTab: (appId) => {
+  closeTab: async (appId) => {
     set((s) => {
       const openTabs = s.openTabs.filter((id) => id !== appId);
       let activeAppId = s.activeAppId;
@@ -371,10 +390,17 @@ export const useAppStore = create<AppState>()((set, get) => ({
       }
       return { openTabs, activeAppId };
     });
-    const session = get().sessions[appId];
-    // Not awaited: the tab is already gone from the UI, and the session is torn
-    // down below regardless of when the kill lands.
-    if (session?.state === "running") void sessionRegistry.stop(appId);
+    // Hide the tab immediately, but retain the session until cleanup finishes.
+    // This also covers a tab closed during startup or another stop request.
+    try {
+      await sessionRegistry.stop(appId);
+    } catch (error) {
+      const name = get().apps.find((app) => app.id === appId)?.name ?? appId;
+      toast.error(fmt(dictionaries[get().locale].toasts.stopFailed, { name }), {
+        description: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
     sessionRegistry.remove(appId);
     set((s) => {
       const sessions = { ...s.sessions };

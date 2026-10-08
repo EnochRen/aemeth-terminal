@@ -12,6 +12,7 @@ export function useShortcuts() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (!e.ctrlKey || e.altKey || e.metaKey) return;
       const s = useAppStore.getState();
+      if (s.shuttingDown) return;
 
       if (e.key === "Tab") {
         if (s.openTabs.length === 0 || inEditableContext()) return;

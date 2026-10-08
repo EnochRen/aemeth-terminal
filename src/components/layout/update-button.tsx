@@ -19,13 +19,28 @@ import type { DownloadProgress, DownloadStatus, UpdateInfo } from "@/types";
 import {
   checkForUpdate,
   downloadAndInstallUpdate,
-  restartApp,
+  restartApp as relaunchApp,
   cancelDownload,
   formatSize,
 } from "@/services/updater";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { dictionaries } from "@/i18n/locales";
+
+async function restartApp(): Promise<void> {
+  const state = useAppStore.getState();
+  if (state.shuttingDown) return;
+  useAppStore.setState({ shuttingDown: true, closePromptOpen: false });
+  try {
+    await relaunchApp();
+  } catch (error) {
+    toast.error(dictionaries[useAppStore.getState().locale].update.restartFailed, {
+      description: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    useAppStore.setState({ shuttingDown: false });
+  }
+}
 
 /**
  * Bottom-left sidebar icon that opens a popover.

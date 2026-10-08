@@ -71,6 +71,8 @@ export class SessionClient {
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private opened = false;
   private webgl: WebglAddon | null = null;
+  private inputQueue: Promise<void> = Promise.resolve();
+  private resizeQueue: Promise<void> = Promise.resolve();
 
   constructor(app: AppConfig, status: SessionStatus) {
     this.app = app;
@@ -218,7 +220,10 @@ export class SessionClient {
     if (!this.opened) return;
     try {
       this.fit.fit();
-      void ptyResize(this.sessionId, this.term.cols, this.term.rows).catch(() => {});
+      const { cols, rows } = this.term;
+      this.resizeQueue = this.resizeQueue
+        .then(() => ptyResize(this.sessionId, cols, rows))
+        .catch(() => {});
     } catch {
       /* container not visible yet */
     }
@@ -243,7 +248,12 @@ export class SessionClient {
     // crossing chunk boundaries stay intact.
     const chunks = this.pendingChunks;
     this.pendingChunks = [];
-    void ptyWrite(this.sessionId, concatBytes(chunks)).catch(() => {});
+    // Native writes run on background workers; keep input in keystroke order.
+    this.inputQueue = this.inputQueue.then(async () => {
+      if (this.status.state === "running") {
+        await ptyWrite(this.sessionId, concatBytes(chunks));
+      }
+    }).catch(() => {});
   }
 
   dispose(): void {
@@ -270,13 +280,15 @@ export type StatusListener = (appId: string, status: SessionStatus) => void;
 export type PortsListener = (appId: string, ports: number[]) => void;
 export type HealthListener = (appId: string, healthy: boolean) => void;
 
-class SessionRegistry {
+export class SessionRegistry {
   private clients = new Map<string, SessionClient>(); // sessionId -> client
   private appToSession = new Map<string, string>(); // appId -> sessionId
   private statusListeners = new Set<StatusListener>();
   private portsListeners = new Set<PortsListener>();
   private healthListeners = new Set<HealthListener>();
-  private starting = new Set<string>();
+  private starting = new Map<string, Promise<SessionClient>>();
+  private stopping = new Map<string, Promise<void>>();
+  private earlyExits = new Map<string, SessionStatus>();
   private initialized = false;
 
   terminalFontSize = 13;
@@ -307,6 +319,9 @@ class SessionRegistry {
       if (client) {
         client.status = status;
         this.emitStatus(status.appId, status);
+      } else if (this.starting.has(status.appId)) {
+        // A short script can exit before the async start command returns.
+        this.earlyExits.set(status.sessionId, status);
       }
     });
     await listenPtyPorts(({ sessionId, ports }) => {
@@ -316,8 +331,9 @@ class SessionRegistry {
       for (const listener of this.portsListeners) listener(client.app.id, ports);
     });
     await listenHealth(({ sessionId, appId, healthy }) => {
-      // Try sessionId first (always unique), fall back to appId.
-      const client = this.clients.get(sessionId) ?? this.getByApp(appId);
+      // Never apply a delayed health result from the previous session to a
+      // replacement session for the same app.
+      const client = this.clients.get(sessionId);
       if (!client) return;
       client.status = { ...client.status, healthy };
       for (const listener of this.healthListeners) listener(appId, healthy);
@@ -348,64 +364,92 @@ class SessionRegistry {
     return sessionId ? this.clients.get(sessionId) : undefined;
   }
 
-  async start(app: AppConfig): Promise<SessionClient> {
+  start(app: AppConfig): Promise<SessionClient> {
+    const pending = this.starting.get(app.id);
+    if (pending) return pending;
+    if (this.stopping.has(app.id)) return Promise.reject(new Error("already stopping"));
+    const operation = this.startSession(app).finally(() => {
+      this.starting.delete(app.id);
+      for (const [id, status] of this.earlyExits) {
+        if (status.appId === app.id) this.earlyExits.delete(id);
+      }
+    });
+    this.starting.set(app.id, operation);
+    return operation;
+  }
+
+  private async startSession(app: AppConfig): Promise<SessionClient> {
     const existing = this.getByApp(app.id);
     if (existing && existing.status.state === "running") return existing;
-    if (this.starting.has(app.id)) throw new Error("already starting");
-    this.starting.add(app.id);
-    try {
-      // Flip the UI to "starting" before the backend round-trip so the click
-      // feels instant. `sessionId` is empty until the backend assigns one —
-      // this status is display-only and is never keyed into `clients`, so the
-      // sessionId-based event listeners cannot match it.
-      this.emitStatus(app.id, {
-        sessionId: PENDING_SESSION_ID,
-        appId: app.id,
-        name: app.name,
-        shell: app.shell,
-        state: "starting",
-        startedAt: Date.now(),
-      });
+    // Flip the UI to "starting" before the backend round-trip. This placeholder
+    // is display-only; session-keyed events cannot resolve it yet.
+    this.emitStatus(app.id, {
+      sessionId: PENDING_SESSION_ID,
+      appId: app.id,
+      name: app.name,
+      shell: app.shell,
+      state: "starting",
+      startedAt: Date.now(),
+    });
 
-      const status = await ptyStart({
-        appId: app.id,
-        name: app.name,
-        kind: app.kind,
-        healthCheckUrl: app.healthCheckUrl,
-        shell: app.shell,
-        cwd: app.cwd,
-        startupDelayMs: app.startupDelayMs,
-        commands: app.commands,
-        envVars: app.envVars,
-      });
+    const status = await ptyStart({
+      appId: app.id,
+      name: app.name,
+      kind: app.kind,
+      healthCheckUrl: app.healthCheckUrl,
+      shell: app.shell,
+      cwd: app.cwd,
+      startupDelayMs: app.startupDelayMs,
+      commands: app.commands,
+      envVars: app.envVars,
+    });
 
-      // Reap a stale exited client for this app, if any.
-      if (existing) this.remove(app.id);
+    // Reap a stale exited client for this app, if any.
+    if (existing) this.remove(app.id);
 
-      const client = new SessionClient(app, status);
-      this.clients.set(status.sessionId, client);
-      this.appToSession.set(app.id, status.sessionId);
-      this.emitStatus(app.id, status);
-      return client;
-    } finally {
-      this.starting.delete(app.id);
-    }
+    const finalStatus = this.earlyExits.get(status.sessionId) ?? status;
+    const client = new SessionClient(app, finalStatus);
+    this.clients.set(status.sessionId, client);
+    this.appToSession.set(app.id, status.sessionId);
+    this.emitStatus(app.id, finalStatus);
+    return client;
   }
 
   /**
-   * Request a kill and return immediately after the optimistic status flip.
-   *
-   * The returned promise resolves once the kill signal has been delivered to
-   * the backend — not once the process is gone. Callers that need the UI to
-   * stay responsive must not await it; the final `exited` state arrives via
-   * the reaper's `pty://exit` event.
+   * Single-flight stop: all callers await the same cleanup. Awaiting IPC
+   * yields to the UI; the backend command completes after tree cleanup.
    */
-  async stop(appId: string): Promise<void> {
+  stop(appId: string): Promise<void> {
+    const pending = this.stopping.get(appId);
+    if (pending) return pending;
+    const operation = this.stopSession(appId).finally(() => this.stopping.delete(appId));
+    this.stopping.set(appId, operation);
+    return operation;
+  }
+
+  private async stopSession(appId: string): Promise<void> {
+    const startup = this.starting.get(appId);
+    if (startup) await startup.catch(() => undefined);
     const client = this.getByApp(appId);
     if (!client || client.status.state !== "running") return;
+    const previous = client.status;
     client.status = { ...client.status, state: "stopping" };
     this.emitStatus(appId, client.status);
-    await ptyClose(client.sessionId).catch(() => {});
+    try {
+      await ptyClose(client.sessionId);
+      // IPC responses and exit events have independent queues. A successful
+      // close already guarantees exit even if its event has not arrived yet.
+      if (client.status.state === "stopping") {
+        client.status = { ...client.status, state: "exited", killed: true, exitCode: 0 };
+        this.emitStatus(appId, client.status);
+      }
+    } catch (error) {
+      if (client.status.state === "stopping") {
+        client.status = previous;
+        this.emitStatus(appId, previous);
+      }
+      throw error;
+    }
   }
 
   remove(appId: string): void {
