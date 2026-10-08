@@ -61,7 +61,11 @@ pub fn get_update_target() -> String {
 
 /// Check GitHub Releases for a newer version. Returns None if up-to-date.
 #[tauri::command]
-pub fn check_update() -> Result<Option<CheckResult>, String> {
+pub async fn check_update() -> Result<Option<CheckResult>, String> {
+    crate::blocking::run(check_update_blocking).await
+}
+
+fn check_update_blocking() -> Result<Option<CheckResult>, String> {
     let current = env!("CARGO_PKG_VERSION");
     let target = get_update_target_raw();
     tracing::info!(
@@ -320,12 +324,17 @@ pub fn update_cancel(state: tauri::State<UpdateState>) {
 
 /// Download `url` to a temp file, streaming progress events. Returns the path.
 #[tauri::command]
-pub fn update_download(
+pub async fn update_download(
     app: AppHandle,
-    state: tauri::State<UpdateState>,
+    state: tauri::State<'_, UpdateState>,
     url: String,
 ) -> Result<String, String> {
     state.cancel.store(false, Ordering::SeqCst);
+    let state = state.inner().clone();
+    crate::blocking::run(move || download_update(app, state, url)).await
+}
+
+fn download_update(app: AppHandle, state: UpdateState, url: String) -> Result<String, String> {
     tracing::info!(%url, "starting update download");
     let session_id = DOWNLOAD_SESSION.fetch_add(1, Ordering::SeqCst) + 1;
 
@@ -401,12 +410,12 @@ pub fn update_extract(archive: String) -> Result<String, String> {
     })?;
     let lower = archive.to_lowercase();
     if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
-        extract_tar_gz(&archive, &dest.to_str().unwrap_or("")).map_err(|e| {
+        extract_tar_gz(&archive, dest.to_str().unwrap_or("")).map_err(|e| {
             tracing::error!(error = %e, archive = %archive, "failed to extract tar archive");
             e
         })?;
     } else {
-        extract_zip(&archive, &dest.to_str().unwrap_or("")).map_err(|e| {
+        extract_zip(&archive, dest.to_str().unwrap_or("")).map_err(|e| {
             tracing::error!(error = %e, archive = %archive, "failed to extract zip archive");
             e
         })?;
@@ -540,29 +549,39 @@ fn copy_dir_contents(src: &Path, dst: &Path) -> Result<(), String> {
 
 /// Spawn the new executable detached, then exit the current process.
 #[tauri::command]
-pub fn update_relaunch(manager: tauri::State<crate::pty::PtyManager>, exe_path: String) {
+pub async fn update_relaunch(
+    manager: tauri::State<'_, crate::pty::PtyManager>,
+    exe_path: String,
+) -> Result<(), String> {
     tracing::info!(%exe_path, "relaunching with new executable");
-    // Make sure no stray shells survive the swap.
-    manager.close_all();
-    manager.wait_idle(std::time::Duration::from_secs(3));
+    let worker = manager.inner().clone();
+    crate::blocking::run(move || {
+        // Make sure no stray shells survive the swap.
+        worker.close_all()?;
 
-    let spawn = || -> std::io::Result<std::process::Child> {
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            const DETACHED_PROCESS: u32 = 0x00000008;
-            const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-            std::process::Command::new(&exe_path)
-                .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
-                .spawn()
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            std::process::Command::new(&exe_path).spawn()
-        }
-    };
+        let spawn = || -> std::io::Result<std::process::Child> {
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                const DETACHED_PROCESS: u32 = 0x00000008;
+                const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+                std::process::Command::new(&exe_path)
+                    .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+                    .spawn()
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                std::process::Command::new(&exe_path).spawn()
+            }
+        };
 
-    if spawn().is_ok() {
+        if let Err(error) = spawn() {
+            return Err(format!("failed to relaunch application: {error}"));
+        }
         std::process::exit(0);
-    }
+    })
+    .await
+    .inspect_err(|_| {
+        manager.cancel_shutdown();
+    })
 }

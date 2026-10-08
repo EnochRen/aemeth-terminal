@@ -12,11 +12,11 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
@@ -28,6 +28,7 @@ pub const EVENT_EXIT: &str = "pty://exit";
 pub const EVENT_PORTS: &str = "pty://ports";
 
 const PORTS_POLL_MS: u64 = 2000;
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 const INITIAL_COLS: u16 = 110;
 const INITIAL_ROWS: u16 = 28;
@@ -123,6 +124,11 @@ struct PortsEvent {
 }
 
 struct SessionHandle {
+    /// Serializes tree cleanup with duplicate stops and the exit notification.
+    close_lock: Mutex<()>,
+    /// Keep failed descendants addressable even after their shell has exited.
+    pending_tree: Mutex<Vec<(sysinfo::Pid, u64)>>,
+    cleanup_changed: Condvar,
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     /// Detached kill handle — safe to call while the reaper owns the child.
@@ -149,6 +155,28 @@ struct ManagerInner {
     /// Set once the user confirms the close-guard dialog; the next
     /// `CloseRequested` event is let through without interception.
     force_close: AtomicBool,
+    admission: Mutex<Admission>,
+    startup_changed: Condvar,
+    sessions_changed: Condvar,
+    /// Whole-app shutdown is single-flight, independent of individual stops.
+    shutdown_lock: Mutex<()>,
+}
+
+#[derive(Default)]
+struct Admission {
+    closing: bool,
+    starting: usize,
+}
+
+/// Startup may finish after shutdown was requested. The lease makes shutdown
+/// wait for that session to be registered before taking its cleanup snapshot.
+struct StartLease<'a>(&'a ManagerInner);
+
+impl Drop for StartLease<'_> {
+    fn drop(&mut self) {
+        self.0.admission.lock().starting -= 1;
+        self.0.startup_changed.notify_all();
+    }
 }
 
 /// Cheaply cloneable handle to the process-wide session table.
@@ -198,6 +226,7 @@ impl PtyManager {
 
     /// Spawn a pty session for the given app spec.
     pub fn start(&self, app: &AppHandle, spec: AppSpec) -> anyhow::Result<SessionStatus> {
+        let _startup = self.begin_start()?;
         let pty_system = native_pty_system();
         let pair = pty_system.openpty(PtySize {
             rows: INITIAL_ROWS,
@@ -246,6 +275,9 @@ impl PtyManager {
         };
 
         let handle = Arc::new(SessionHandle {
+            close_lock: Mutex::new(()),
+            pending_tree: Mutex::new(Vec::new()),
+            cleanup_changed: Condvar::new(),
             writer: Mutex::new(writer),
             master: Mutex::new(pair.master),
             killer: Mutex::new(killer),
@@ -301,6 +333,12 @@ impl PtyManager {
                 .spawn(move || {
                     // The reaper owns the child exclusively — no lock needed.
                     let exit_code = child.wait().ok().map(|st| st.exit_code());
+                    // The shell can die before its descendants. Publish exit
+                    // only after a concurrent tree cleanup releases this gate.
+                    let mut closing = handle.close_lock.lock();
+                    while !handle.pending_tree.lock().is_empty() {
+                        handle.cleanup_changed.wait(&mut closing);
+                    }
                     let killed = handle.killed.load(Ordering::SeqCst);
                     tracing::info!(
                         %session_id,
@@ -314,6 +352,7 @@ impl PtyManager {
                     let exit_code = if killed { Some(0) } else { exit_code };
                     handle.alive.store(false, Ordering::SeqCst);
                     manager.inner.sessions.lock().remove(&session_id);
+                    manager.inner.sessions_changed.notify_all();
                     let _ = app.emit(
                         EVENT_EXIT,
                         SessionStatus {
@@ -332,8 +371,8 @@ impl PtyManager {
                 })?;
         }
 
-        self.ensure_ports_ticker(&app);
-        self.ensure_health_ticker(&app);
+        self.ensure_ports_ticker(app);
+        self.ensure_health_ticker(app);
 
         // Kick off an immediate health check for this session in the background.
         if let Some(ref url) = spec.health_check_url {
@@ -414,7 +453,9 @@ impl PtyManager {
                     sleep_ms(startup_delay);
                     let last = commands.len().saturating_sub(1);
                     for (idx, preset) in commands.iter().enumerate() {
-                        if !handle.alive.load(Ordering::SeqCst) {
+                        if !handle.alive.load(Ordering::SeqCst)
+                            || handle.killed.load(Ordering::SeqCst)
+                        {
                             break;
                         }
                         let mut line = preset.command.trim_end().to_string();
@@ -447,12 +488,10 @@ impl PtyManager {
 
     /// Forward user input (base64 bytes) to the pty.
     pub fn write(&self, session_id: &str, data_b64: &str) -> anyhow::Result<()> {
-        let data = BASE64
-            .decode(data_b64)
-            .map_err(|error| {
-                tracing::warn!(%session_id, %error, "received invalid base64 pty input");
-                error
-            })?;
+        let data = BASE64.decode(data_b64).map_err(|error| {
+            tracing::warn!(%session_id, %error, "received invalid base64 pty input");
+            error
+        })?;
         let session = self.session(session_id)?;
         session.writer.lock().write_all(&data)?;
         Ok(())
@@ -473,28 +512,86 @@ impl PtyManager {
         Ok(())
     }
 
-    /// Kill the session's process tree (exit event follows from the reaper).
-    ///
-    /// The sessions-map guard is dropped before touching the killer, and the
-    /// killer is disjoint from the child handle the reaper blocks on — no
-    /// deadlock path.
-    pub fn close(&self, session_id: &str) {
+    /// Wait for tree cleanup and the reaper. Only call from a blocking worker.
+    /// Map locks are never held across OS calls or waits.
+    pub fn close(&self, session_id: &str) -> Result<(), String> {
+        self.close_until(session_id, Instant::now() + CLOSE_TIMEOUT)
+    }
+
+    fn close_until(&self, session_id: &str, deadline: Instant) -> Result<(), String> {
         let session = self.inner.sessions.lock().get(session_id).cloned();
         if let Some(session) = session {
-            session.killed.store(true, Ordering::SeqCst);
-            // Kill the whole tree so services spawned by the shell (node,
-            // yarn, vite, ...) don't survive the session.
-            if let Some(pid) = session.pid {
-                kill_tree(pid);
+            {
+                let _closing = session.close_lock.try_lock_until(deadline).ok_or_else(|| {
+                    format!("timed out waiting for session '{session_id}' to stop")
+                })?;
+                if session.alive.load(Ordering::SeqCst)
+                    && !session.killed.swap(true, Ordering::SeqCst)
+                {
+                    // Snapshot descendants before killing the parent; otherwise
+                    // reparented children can disappear from the tree.
+                    let result = if let Some(pid) = session.pid {
+                        kill_tree(pid, &mut session.pending_tree.lock(), deadline, || {
+                            session.killer.lock().kill()
+                        })
+                    } else {
+                        session
+                            .killer
+                            .lock()
+                            .kill()
+                            .map_err(|error| error.to_string())
+                    };
+                    if let Err(error) = result {
+                        session.killed.store(false, Ordering::SeqCst);
+                        return Err(error);
+                    }
+                    session.cleanup_changed.notify_all();
+                }
             }
-            // Fallback if the tree kill missed the direct child.
-            let _ = session.killer.lock().kill();
+            let mut sessions = self.inner.sessions.lock();
+            while sessions.contains_key(session_id) {
+                if self
+                    .inner
+                    .sessions_changed
+                    .wait_until(&mut sessions, deadline)
+                    .timed_out()
+                    && sessions.contains_key(session_id)
+                {
+                    return Err(format!(
+                        "timed out waiting for session '{session_id}' to exit"
+                    ));
+                }
+            }
         }
+        Ok(())
+    }
+
+    fn begin_start(&self) -> anyhow::Result<StartLease<'_>> {
+        let mut admission = self.inner.admission.lock();
+        anyhow::ensure!(!admission.closing, "application is shutting down");
+        admission.starting += 1;
+        Ok(StartLease(&self.inner))
+    }
+
+    /// Atomically seal admission when there is nothing left to clean up.
+    /// Safe in native GUI callbacks: only short, in-memory locks are taken.
+    pub fn prepare_window_close(&self) -> bool {
+        let mut admission = self.inner.admission.lock();
+        if admission.starting > 0 || !self.inner.sessions.lock().is_empty() {
+            return false;
+        }
+        admission.closing = true;
+        true
+    }
+
+    pub fn cancel_shutdown(&self) {
+        self.inner.admission.lock().closing = false;
+        self.inner.force_close.store(false, Ordering::SeqCst);
     }
 
     /// Number of currently running sessions.
     pub fn running_count(&self) -> usize {
-        self.inner.sessions.lock().len()
+        self.inner.admission.lock().starting + self.inner.sessions.lock().len()
     }
 
     pub fn mark_force_close(&self) {
@@ -527,25 +624,54 @@ impl PtyManager {
     }
 
     /// Terminate everything — used on application exit.
-    pub fn close_all(&self) {
-        let ids: Vec<String> = self.inner.sessions.lock().keys().cloned().collect();
-        tracing::info!(count = ids.len(), "closing all sessions");
-        for id in ids {
-            self.close(&id);
-        }
-    }
-
-    /// Block until every session's reaper has finished (or the timeout
-    /// elapses). Lets the shutdown flow guarantee no stray processes before
-    /// the window is destroyed.
-    pub fn wait_idle(&self, timeout: Duration) {
-        let start = std::time::Instant::now();
-        while start.elapsed() < timeout {
-            if self.inner.sessions.lock().is_empty() {
-                return;
+    pub fn close_all(&self) -> Result<(), String> {
+        let _shutdown = self.inner.shutdown_lock.lock();
+        let result = (|| {
+            let deadline = Instant::now() + CLOSE_TIMEOUT;
+            let mut admission = self.inner.admission.lock();
+            admission.closing = true;
+            while admission.starting > 0 {
+                if self
+                    .inner
+                    .startup_changed
+                    .wait_until(&mut admission, deadline)
+                    .timed_out()
+                    && admission.starting > 0
+                {
+                    return Err("timed out waiting for session startup".to_string());
+                }
             }
-            std::thread::sleep(Duration::from_millis(25));
+            drop(admission);
+
+            let ids: Vec<String> = self.inner.sessions.lock().keys().cloned().collect();
+            tracing::info!(count = ids.len(), "closing all sessions");
+            // Independent sessions shut down together. Each close joins an
+            // existing stop through its per-session gate.
+            std::thread::scope(|scope| {
+                let workers: Vec<_> = ids
+                    .iter()
+                    .map(|id| scope.spawn(|| self.close(id)))
+                    .collect();
+                let errors: Vec<_> = workers
+                    .into_iter()
+                    .filter_map(|worker| {
+                        worker
+                            .join()
+                            .unwrap_or_else(|_| Err("session cleanup panicked".into()))
+                            .err()
+                    })
+                    .collect();
+                if errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(errors.join("; "))
+                }
+            })
+        })();
+        if result.is_err() {
+            self.cancel_shutdown();
         }
+        result
     }
 
     /// Spawn the background ports poller once.
@@ -663,26 +789,378 @@ pub fn sessions_snapshot(manager: &PtyManager) -> Vec<(String, String, String)> 
 /// live to see their child die — killing the wrapper before its children
 /// keeps the terminal quiet. The session's reported exit code is normalized
 /// to 0 by the reaper (`killed` flag).
-fn kill_tree(root: u32) {
-    let system = sysinfo::System::new_all();
-    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
-    for (pid, proc) in system.processes() {
-        if let Some(parent) = proc.parent() {
-            children.entry(parent.as_u32()).or_default().push(pid.as_u32());
+fn kill_tree(
+    root: u32,
+    targets: &mut Vec<(sysinfo::Pid, u64)>,
+    deadline: Instant,
+    fallback: impl FnOnce() -> std::io::Result<()>,
+) -> Result<(), String> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+    // Killing needs only process identity and parentage, not CPU, memory,
+    // environment, disks, or command lines for every process on the machine.
+    let mut system =
+        System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
+    if targets.is_empty() {
+        let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
+        for (pid, proc) in system.processes() {
+            if let Some(parent) = proc.parent() {
+                children
+                    .entry(parent.as_u32())
+                    .or_default()
+                    .push(pid.as_u32());
+            }
         }
-    }
-    let mut queue = VecDeque::from([root]);
-    let mut seen = HashSet::from([root]);
-    while let Some(pid) = queue.pop_front() {
-        if let Some(proc) = system.process(sysinfo::Pid::from_u32(pid)) {
-            let _ = proc.kill();
-        }
-        if let Some(kids) = children.get(&pid) {
-            for &kid in kids {
-                if seen.insert(kid) {
-                    queue.push_back(kid);
+        let mut queue = VecDeque::from([root]);
+        let mut seen = HashSet::from([root]);
+        while let Some(pid) = queue.pop_front() {
+            if let Some(proc) = system.process(Pid::from_u32(pid)) {
+                targets.push((proc.pid(), proc.start_time()));
+            }
+            if let Some(kids) = children.get(&pid) {
+                for &kid in kids {
+                    if seen.insert(kid) {
+                        queue.push_back(kid);
+                    }
                 }
             }
         }
+    }
+    // Retries use retained identities: children may have been reparented.
+    // Never terminate a new process that reused one of their PIDs.
+    let terminate = |system: &System, targets: &[(Pid, u64)]| {
+        for (pid, started) in targets {
+            if let Some(process) = system.process(*pid).filter(|p| p.start_time() == *started) {
+                if !process.kill() {
+                    tracing::warn!(root, pid = %pid, name = ?process.name(), "process termination request failed");
+                }
+            }
+        }
+    };
+    terminate(&system, targets);
+    // The detached child handle is authoritative even if the snapshot missed it.
+    let _ = fallback();
+    let pids: Vec<Pid> = targets.iter().map(|(pid, _)| *pid).collect();
+    let mut retry_at = Instant::now() + Duration::from_millis(250);
+    while !targets.is_empty() {
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&pids),
+            true,
+            ProcessRefreshKind::new(),
+        );
+        targets.retain(|(pid, started)| {
+            system.process(*pid).is_some_and(|process| {
+                process.start_time() == *started
+                    && process.status() != sysinfo::ProcessStatus::Zombie
+                    && process.status() != sysinfo::ProcessStatus::Dead
+            })
+        });
+        if targets.is_empty() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "timed out stopping process tree {root}; remaining PIDs: {}",
+                targets
+                    .iter()
+                    .map(|(pid, _)| pid.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        // OS termination can fail transiently during process startup. Retry
+        // only still-live identities, with a bounded interval and deadline.
+        if Instant::now() >= retry_at {
+            terminate(&system, targets);
+            retry_at = Instant::now() + Duration::from_millis(250);
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{atomic::AtomicUsize, mpsc};
+
+    struct TestMaster;
+    impl MasterPty for TestMaster {
+        fn resize(&self, _: PtySize) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn get_size(&self) -> anyhow::Result<PtySize> {
+            Ok(PtySize::default())
+        }
+        fn try_clone_reader(&self) -> anyhow::Result<Box<dyn Read + Send>> {
+            Ok(Box::new(std::io::empty()))
+        }
+        fn take_writer(&self) -> anyhow::Result<Box<dyn Write + Send>> {
+            Ok(Box::new(std::io::sink()))
+        }
+        #[cfg(unix)]
+        fn process_group_leader(&self) -> Option<i32> {
+            None
+        }
+        #[cfg(unix)]
+        fn as_raw_fd(&self) -> Option<i32> {
+            None
+        }
+        #[cfg(unix)]
+        fn tty_name(&self) -> Option<std::path::PathBuf> {
+            None
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct TestKiller {
+        entered: mpsc::Sender<()>,
+        release: Arc<Mutex<mpsc::Receiver<bool>>>,
+        calls: Arc<AtomicUsize>,
+    }
+    impl ChildKiller for TestKiller {
+        fn kill(&mut self) -> std::io::Result<()> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.entered.send(()).unwrap();
+            if self
+                .release
+                .lock()
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+            {
+                Ok(())
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "denied",
+                ))
+            }
+        }
+        fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+            Box::new(self.clone())
+        }
+    }
+
+    fn insert_session(
+        manager: &PtyManager,
+        id: &str,
+    ) -> (
+        Arc<SessionHandle>,
+        mpsc::Receiver<()>,
+        mpsc::Sender<bool>,
+        Arc<AtomicUsize>,
+    ) {
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let session = Arc::new(SessionHandle {
+            close_lock: Mutex::new(()),
+            pending_tree: Mutex::new(Vec::new()),
+            cleanup_changed: Condvar::new(),
+            writer: Mutex::new(Box::new(std::io::sink())),
+            master: Mutex::new(Box::new(TestMaster)),
+            killer: Mutex::new(Box::new(TestKiller {
+                entered: entered_tx,
+                release: Arc::new(Mutex::new(release_rx)),
+                calls: calls.clone(),
+            })),
+            app_id: id.into(),
+            name: id.into(),
+            shell: ShellKind::Cmd,
+            pid: None,
+            started_at: 0,
+            alive: AtomicBool::new(true),
+            killed: AtomicBool::new(false),
+            health_check_url: None,
+        });
+        manager
+            .inner
+            .sessions
+            .lock()
+            .insert(id.into(), session.clone());
+        (session, entered_rx, release_tx, calls)
+    }
+
+    fn reap(manager: &PtyManager, id: &str, session: &SessionHandle) {
+        let _closing = session.close_lock.lock();
+        session.alive.store(false, Ordering::SeqCst);
+        manager.inner.sessions.lock().remove(id);
+        manager.inner.sessions_changed.notify_all();
+    }
+
+    #[test]
+    fn duplicate_stops_share_cleanup_without_blocking_status_queries() {
+        let manager = PtyManager::new();
+        let (session, entered, release, calls) = insert_session(&manager, "one");
+        std::thread::scope(|scope| {
+            let first = scope.spawn(|| manager.close("one"));
+            entered.recv_timeout(Duration::from_secs(2)).unwrap();
+            let second = scope.spawn(|| manager.close("one"));
+            assert_eq!(manager.list().len(), 1);
+            assert!(!manager.prepare_window_close());
+            release.send(true).unwrap();
+            reap(&manager, "one", &session);
+            first.join().unwrap().unwrap();
+            second.join().unwrap().unwrap();
+        });
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(manager.close("one").is_ok());
+    }
+
+    #[test]
+    fn failed_cleanup_is_retryable() {
+        let manager = PtyManager::new();
+        let (session, entered, release, calls) = insert_session(&manager, "one");
+        std::thread::scope(|scope| {
+            let first = scope.spawn(|| manager.close_all());
+            entered.recv_timeout(Duration::from_secs(2)).unwrap();
+            release.send(false).unwrap();
+            assert!(first.join().unwrap().is_err());
+            assert!(!session.killed.load(Ordering::SeqCst));
+            assert!(manager.begin_start().is_ok());
+            let retry = scope.spawn(|| manager.close("one"));
+            entered.recv_timeout(Duration::from_secs(2)).unwrap();
+            release.send(true).unwrap();
+            reap(&manager, "one", &session);
+            retry.join().unwrap().unwrap();
+        });
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_reaper_timeout_is_reported_without_forgetting_the_session() {
+        let manager = PtyManager::new();
+        let (session, _entered, release, _) = insert_session(&manager, "one");
+        release.send(true).unwrap();
+        let error = manager.close_until("one", Instant::now()).unwrap_err();
+        assert!(error.contains("timed out"));
+        assert_eq!(manager.running_count(), 1);
+        reap(&manager, "one", &session);
+        manager.close("one").unwrap();
+    }
+
+    #[test]
+    fn shutdown_cleans_independent_sessions_concurrently() {
+        let manager = PtyManager::new();
+        let (one, entered_one, release_one, _) = insert_session(&manager, "one");
+        let (two, entered_two, release_two, _) = insert_session(&manager, "two");
+        std::thread::scope(|scope| {
+            let shutdown = scope.spawn(|| manager.close_all());
+            entered_one.recv_timeout(Duration::from_secs(2)).unwrap();
+            entered_two.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert!(manager.begin_start().is_err());
+            release_one.send(true).unwrap();
+            release_two.send(true).unwrap();
+            reap(&manager, "one", &one);
+            reap(&manager, "two", &two);
+            shutdown.join().unwrap().unwrap();
+        });
+        assert_eq!(manager.running_count(), 0);
+        assert!(manager.begin_start().is_err());
+    }
+
+    #[test]
+    fn closing_an_idle_window_seals_startup_admission() {
+        let manager = PtyManager::new();
+        let startup = manager.begin_start().unwrap();
+        assert!(!manager.prepare_window_close());
+        drop(startup);
+        assert!(manager.prepare_window_close());
+        assert!(manager.begin_start().is_err());
+        manager.cancel_shutdown();
+        assert!(manager.begin_start().is_ok());
+    }
+
+    #[test]
+    fn shutdown_waits_for_an_inflight_start() {
+        let manager = PtyManager::new();
+        let startup = manager.begin_start().unwrap();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let shutdown = scope.spawn(|| {
+                let result = manager.close_all();
+                finished_tx.send(()).unwrap();
+                result
+            });
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !manager.inner.admission.lock().closing {
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            assert!(finished_rx.try_recv().is_err());
+            assert!(manager.begin_start().is_err());
+            drop(startup);
+            shutdown.join().unwrap().unwrap();
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn kills_a_real_windows_process_tree_and_waits_for_descendants() {
+        check_windows_tree_cleanup(false);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn retry_cleans_remembered_children_after_the_root_has_exited() {
+        check_windows_tree_cleanup(true);
+    }
+
+    #[cfg(windows)]
+    fn check_windows_tree_cleanup(root_already_exited: bool) {
+        use std::os::windows::process::CommandExt;
+        use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+        let mut root = std::process::Command::new("cmd.exe")
+            .args(["/D", "/C", "ping -n 30 127.0.0.1 > NUL"])
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+            .spawn()
+            .unwrap();
+        let root_pid = Pid::from_u32(root.id());
+        let mut system = System::new();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let child_pid = loop {
+            system.refresh_processes_specifics(
+                ProcessesToUpdate::All,
+                true,
+                ProcessRefreshKind::new(),
+            );
+            if let Some(child) = system
+                .processes()
+                .values()
+                .find(|p| p.parent() == Some(root_pid))
+            {
+                break Some(child.pid());
+            }
+            if Instant::now() >= deadline {
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let mut targets = Vec::new();
+        if root_already_exited {
+            if let Some(child) = child_pid.and_then(|pid| system.process(pid)) {
+                targets.push((child.pid(), child.start_time()));
+            }
+            root.kill().unwrap();
+            root.wait().unwrap();
+        }
+        let result = kill_tree(
+            root.id(),
+            &mut targets,
+            Instant::now() + CLOSE_TIMEOUT,
+            || root.kill(),
+        );
+        system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::new());
+        let root_exited = system.process(root_pid).is_none();
+        let child_exited = child_pid.is_some_and(|pid| system.process(pid).is_none());
+        // Cleanup remains best effort even when an assertion below fails.
+        if let Some(child) = child_pid.and_then(|pid| system.process(pid)) {
+            let _ = child.kill();
+        }
+        let _ = root.kill();
+        root.wait().unwrap();
+        assert!(child_pid.is_some(), "test child did not start");
+        result.unwrap();
+        assert!(root_exited);
+        assert!(child_exited);
     }
 }

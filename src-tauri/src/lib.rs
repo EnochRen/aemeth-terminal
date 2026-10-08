@@ -1,3 +1,4 @@
+mod blocking;
 mod health;
 mod logger;
 mod ports;
@@ -16,50 +17,64 @@ use tauri::{Emitter, Manager};
 const EVENT_CLOSE_BLOCKED: &str = "aemeth://close-blocked";
 
 #[tauri::command]
-fn pty_start(
-    manager: tauri::State<PtyManager>,
+async fn pty_start(
+    manager: tauri::State<'_, PtyManager>,
     app: tauri::AppHandle,
     spec: AppSpec,
 ) -> Result<SessionStatus, String> {
     tracing::info!(app_id = %spec.app_id, name = %spec.name, "starting pty session");
-    let status = manager.start(&app, spec).map_err(|e| {
-        tracing::error!(error = %e, "failed to start pty session");
-        e.to_string()
-    })?;
+    let manager = manager.inner().clone();
+    let status = blocking::run(move || manager.start(&app, spec).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to start pty session");
+            e.to_string()
+        })?;
     tracing::info!(session_id = %status.session_id, pid = ?status.pid, "pty session started");
     Ok(status)
 }
 
 #[tauri::command]
-fn pty_write(
-    manager: tauri::State<PtyManager>,
+async fn pty_write(
+    manager: tauri::State<'_, PtyManager>,
     session_id: String,
     data: String,
 ) -> Result<(), String> {
-    manager.write(&session_id, &data).map_err(|e| {
-        tracing::error!(%session_id, error = %e, "failed to write to pty session");
-        e.to_string()
+    let manager = manager.inner().clone();
+    blocking::run(move || {
+        manager.write(&session_id, &data).map_err(|e| {
+            tracing::error!(%session_id, error = %e, "failed to write to pty session");
+            e.to_string()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-fn pty_resize(
-    manager: tauri::State<PtyManager>,
+async fn pty_resize(
+    manager: tauri::State<'_, PtyManager>,
     session_id: String,
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    manager.resize(&session_id, cols, rows).map_err(|e| {
-        tracing::error!(%session_id, cols, rows, error = %e, "failed to resize pty session");
-        e.to_string()
+    let manager = manager.inner().clone();
+    blocking::run(move || {
+        manager.resize(&session_id, cols, rows).map_err(|e| {
+            tracing::error!(%session_id, cols, rows, error = %e, "failed to resize pty session");
+            e.to_string()
+        })
     })
+    .await
 }
 
 #[tauri::command]
-fn pty_close(manager: tauri::State<PtyManager>, session_id: String) -> Result<(), String> {
+async fn pty_close(
+    manager: tauri::State<'_, PtyManager>,
+    session_id: String,
+) -> Result<(), String> {
     tracing::info!(%session_id, "closing pty session");
-    manager.close(&session_id);
-    Ok(())
+    let manager = manager.inner().clone();
+    blocking::run(move || manager.close(&session_id)).await
 }
 
 #[tauri::command]
@@ -94,48 +109,57 @@ fn read_text_file(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn process_list() -> Vec<procs::ProcessInfo> {
-    procs::snapshot()
+async fn process_list() -> Result<Vec<procs::ProcessInfo>, String> {
+    blocking::run(|| Ok(procs::snapshot())).await
 }
 
 #[tauri::command]
-fn process_kill(pid: u32) -> Result<usize, String> {
+async fn process_kill(pid: u32) -> Result<usize, String> {
     tracing::info!(%pid, "killing process tree");
-    procs::kill_tree(pid).map_err(|e| {
-        tracing::error!(%pid, error = %e, "failed to kill process tree");
-        e
-    })
+    blocking::run(move || procs::kill_tree(pid))
+        .await
+        .map_err(|e| {
+            tracing::error!(%pid, error = %e, "failed to kill process tree");
+            e
+        })
 }
 
 #[tauri::command]
-fn process_detail(pid: u32) -> Result<procs::ProcessDetail, String> {
-    procs::detail(pid).ok_or_else(|| {
-        tracing::warn!(%pid, "process detail requested for missing process");
-        "process not found".into()
+async fn process_detail(pid: u32) -> Result<procs::ProcessDetail, String> {
+    blocking::run(move || {
+        procs::detail(pid).ok_or_else(|| {
+            tracing::warn!(%pid, "process detail requested for missing process");
+            "process not found".into()
+        })
     })
+    .await
 }
 
 /// User confirmed the close-guard dialog: destroy the window natively.
 /// Deliberately bypasses the webview event queue so the close is instant
 /// even while sessions are streaming output.
 #[tauri::command]
-fn close_force(window: tauri::Window, manager: tauri::State<PtyManager>) {
+fn close_force(window: tauri::Window, manager: tauri::State<PtyManager>) -> Result<(), String> {
+    if !manager.prepare_window_close() {
+        return Err("sessions are still shutting down".into());
+    }
     manager.mark_force_close();
-    let _ = window.destroy();
+    window.destroy().map_err(|error| {
+        manager.cancel_shutdown();
+        error.to_string()
+    })
 }
 
-/// Graceful shutdown step: kill every session tree (parents first, exit code
-/// normalized to 0) and wait for the reapers to finish, so nothing survives
-/// the window. Called by the frontend's shutdown overlay before `close_force`.
+/// Drain sessions on the blocking pool before the frontend destroys the window.
 #[tauri::command]
 async fn shutdown_sessions(manager: tauri::State<'_, PtyManager>) -> Result<(), String> {
     tracing::info!("shutting down all sessions");
-    let manager = manager.inner().clone();
-    let _ = tauri::async_runtime::spawn_blocking(move || {
-        manager.close_all();
-        manager.wait_idle(std::time::Duration::from_secs(5));
-    })
-    .await;
+    let worker = manager.inner().clone();
+    blocking::run(move || worker.close_all())
+        .await
+        .inspect_err(|_| {
+            manager.cancel_shutdown();
+        })?;
     tracing::info!("all sessions shut down");
     Ok(())
 }
@@ -228,25 +252,46 @@ pub fn run() {
                 if manager.is_force_close() {
                     return;
                 }
-                let running = manager.running_count();
-                if running == 0 {
+                if manager.prepare_window_close() {
                     return;
                 }
                 // Sessions are live: block the native close and hand the
                 // decision to the frontend (confirm dialog / shutdown
                 // overlay, depending on settings).
                 api.prevent_close();
-                let _ = window.emit(EVENT_CLOSE_BLOCKED, running);
+                let _ = window.emit(EVENT_CLOSE_BLOCKED, manager.running_count());
             }
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(move |_handle, event| {
-        // Make sure no stray shells keep running after the window closes.
-        if let tauri::RunEvent::ExitRequested { .. } = event {
-            tracing::info!("app exit requested, closing all sessions");
-            manager.close_all();
+    let exit_pending = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    app.run(move |handle, event| {
+        // ExitRequested also runs on the GUI thread. Defer exit until background
+        // cleanup finishes; never perform OS process scans in this callback.
+        if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+            if manager.prepare_window_close() {
+                return;
+            }
+            api.prevent_exit();
+            if exit_pending.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
+            let manager = manager.clone();
+            let handle = handle.clone();
+            let exit_pending = exit_pending.clone();
+            tauri::async_runtime::spawn(async move {
+                let worker = manager.clone();
+                let result = blocking::run(move || worker.close_all()).await;
+                exit_pending.store(false, std::sync::atomic::Ordering::SeqCst);
+                match result {
+                    Ok(()) => handle.exit(code.unwrap_or(0)),
+                    Err(error) => {
+                        manager.cancel_shutdown();
+                        tracing::error!(%error, "app shutdown failed");
+                    }
+                }
+            });
         }
     });
 }
