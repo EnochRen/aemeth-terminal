@@ -15,6 +15,10 @@ use tauri::{AppHandle, Emitter};
 pub const EVENT_PROGRESS: &str = "download-progress";
 const UPDATE_ENDPOINT: &str =
     "https://api.github.com/repos/EnochRen/aemeth-terminal/releases/latest";
+const RELEASES_LATEST_URL: &str =
+    "https://github.com/EnochRen/aemeth-terminal/releases/latest";
+const RELEASES_DOWNLOAD_BASE: &str =
+    "https://github.com/EnochRen/aemeth-terminal/releases/download";
 
 #[derive(Clone, serde::Serialize)]
 struct ProgressEvent {
@@ -67,15 +71,43 @@ pub fn check_update() -> Result<Option<CheckResult>, String> {
         "starting update check"
     );
 
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("aemeth-terminal-updater")
-        .timeout(std::time::Duration::from_secs(10))
+    let client = build_update_client()?;
+    let release = match fetch_release_via_api(&client) {
+        Ok(release) => release,
+        Err(api_err) => {
+            tracing::warn!(error = %api_err, "GitHub API check failed, trying redirect fallback");
+            fetch_release_via_redirect(&client, &target)?
+        }
+    };
+
+    build_check_result(&release, &target, current)
+}
+
+struct ReleaseInfo {
+    tag: String,
+    body: String,
+    download_url: Option<String>,
+    file_size: Option<u64>,
+    filename: Option<String>,
+    assets: Option<Vec<serde_json::Value>>,
+}
+
+fn build_update_client() -> Result<reqwest::blocking::Client, String> {
+    let user_agent = format!(
+        "aemeth-terminal/{} (+https://github.com/EnochRen/aemeth-terminal)",
+        env!("CARGO_PKG_VERSION")
+    );
+    reqwest::blocking::Client::builder()
+        .user_agent(user_agent)
+        .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| {
             tracing::error!(error = %e, "failed to create update HTTP client");
             format!("failed to create HTTP client: {e}")
-        })?;
+        })
+}
 
+fn fetch_release_via_api(client: &reqwest::blocking::Client) -> Result<ReleaseInfo, String> {
     let resp = client
         .get(UPDATE_ENDPOINT)
         .header("Accept", "application/vnd.github.v3+json")
@@ -87,6 +119,9 @@ pub fn check_update() -> Result<Option<CheckResult>, String> {
 
     let status = resp.status();
     tracing::info!(%status, "received update check response");
+    if let Some(remaining) = resp.headers().get("x-ratelimit-remaining") {
+        tracing::debug!(rate_limit_remaining = ?remaining, "GitHub API rate limit");
+    }
     if !status.is_success() {
         tracing::error!(%status, endpoint = UPDATE_ENDPOINT, "GitHub API returned an error");
         return Err(format!("GitHub API returned {status}"));
@@ -96,11 +131,84 @@ pub fn check_update() -> Result<Option<CheckResult>, String> {
         tracing::error!(error = %e, "failed to decode GitHub release response");
         format!("failed to decode GitHub release response: {e}")
     })?;
-    let latest = release["tag_name"]
+
+    let tag = release["tag_name"]
         .as_str()
-        .unwrap_or("")
-        .trim_start_matches('v');
-    let asset_count = release["assets"].as_array().map_or(0, Vec::len);
+        .ok_or_else(|| "GitHub release response did not contain tag_name".to_string())?
+        .to_string();
+    let body = release["body"].as_str().unwrap_or("").to_string();
+    let assets = release["assets"].as_array().cloned().unwrap_or_default();
+
+    Ok(ReleaseInfo {
+        tag,
+        body,
+        download_url: None,
+        file_size: None,
+        filename: None,
+        assets: Some(assets),
+    })
+}
+
+fn fetch_release_via_redirect(
+    client: &reqwest::blocking::Client,
+    target: &str,
+) -> Result<ReleaseInfo, String> {
+    let resp = client.get(RELEASES_LATEST_URL).send().map_err(|e| {
+        tracing::error!(error = %e, url = RELEASES_LATEST_URL, "redirect fallback request failed");
+        format!("redirect fallback request failed: {e}")
+    })?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        tracing::error!(%status, url = RELEASES_LATEST_URL, "redirect fallback returned an error");
+        return Err(format!("redirect fallback returned {status}"));
+    }
+
+    let tag = parse_release_tag(resp.url().as_str()).ok_or_else(|| {
+        tracing::error!(url = %resp.url(), "could not parse release tag from redirect URL");
+        "could not parse release tag from redirect URL".to_string()
+    })?;
+
+    let (filename, download_url) = build_asset_urls(target, &tag);
+    tracing::info!(
+        tag = %tag,
+        filename = %filename,
+        download_url = %download_url,
+        "resolved latest release via redirect fallback"
+    );
+
+    Ok(ReleaseInfo {
+        tag,
+        body: String::new(),
+        download_url: Some(download_url),
+        file_size: None,
+        filename: Some(filename),
+        assets: None,
+    })
+}
+
+fn parse_release_tag(url: &str) -> Option<String> {
+    url.rsplit("/tag/")
+        .next()
+        .filter(|tag| !tag.is_empty() && tag.starts_with('v'))
+        .map(|tag| tag.to_string())
+}
+
+fn build_asset_urls(target: &str, tag: &str) -> (String, String) {
+    let is_win = target.starts_with("win");
+    let ext = if is_win { ".zip" } else { ".tar.gz" };
+    let filename = format!("aemeth-terminal-{target}-{tag}{ext}");
+    let download_url = format!("{RELEASES_DOWNLOAD_BASE}/{tag}/{filename}");
+    (filename, download_url)
+}
+
+fn build_check_result(
+    release: &ReleaseInfo,
+    target: &str,
+    current: &str,
+) -> Result<Option<CheckResult>, String> {
+    let latest = release.tag.trim_start_matches('v');
+    let asset_count = release.assets.as_ref().map_or(0, |assets| assets.len());
     tracing::info!(
         latest_version = latest,
         asset_count,
@@ -121,20 +229,28 @@ pub fn check_update() -> Result<Option<CheckResult>, String> {
         return Ok(None);
     }
 
+    if let (Some(download_url), Some(filename)) = (&release.download_url, &release.filename) {
+        return Ok(Some(CheckResult {
+            has_update: true,
+            version: format!("v{latest}"),
+            body: release.body.clone(),
+            download_url: Some(download_url.clone()),
+            file_size: release.file_size,
+            filename: Some(filename.clone()),
+        }));
+    }
+
     let is_win = target.starts_with("win");
     let ext = if is_win { ".zip" } else { ".tar.gz" };
-
-    let assets = release["assets"]
-        .as_array()
-        .ok_or_else(|| {
-            tracing::error!("GitHub release response did not contain an assets array");
-            "missing assets in release JSON".to_string()
-        })?;
+    let assets = release.assets.as_ref().ok_or_else(|| {
+        tracing::error!("GitHub release response did not contain an assets array");
+        "missing assets in release JSON".to_string()
+    })?;
 
     for asset in assets {
         let name = asset["name"].as_str().unwrap_or("");
         tracing::debug!(asset = name, "inspecting release asset");
-        if name.contains(&target) && name.ends_with(ext) {
+        if name.contains(target) && name.ends_with(ext) {
             let download_url = asset["browser_download_url"]
                 .as_str()
                 .map(|s| s.to_string());
@@ -151,7 +267,7 @@ pub fn check_update() -> Result<Option<CheckResult>, String> {
             return Ok(Some(CheckResult {
                 has_update: true,
                 version: format!("v{latest}"),
-                body: release["body"].as_str().unwrap_or("").to_string(),
+                body: release.body.clone(),
                 download_url,
                 file_size,
                 filename: Some(name.to_string()),
@@ -159,17 +275,23 @@ pub fn check_update() -> Result<Option<CheckResult>, String> {
         }
     }
 
+    // API succeeded but asset list missed us — try predictable release asset URL.
+    let (filename, download_url) = build_asset_urls(target, &release.tag);
     tracing::warn!(
         update_target = %target,
         expected_extension = ext,
         asset_count = assets.len(),
-        available_assets = ?assets
-            .iter()
-            .filter_map(|asset| asset["name"].as_str())
-            .collect::<Vec<_>>(),
-        "new version exists but no compatible update asset was found"
+        fallback_download_url = %download_url,
+        "no matching asset in release JSON, using constructed download URL"
     );
-    Ok(None)
+    Ok(Some(CheckResult {
+        has_update: true,
+        version: format!("v{latest}"),
+        body: release.body.clone(),
+        download_url: Some(download_url),
+        file_size: None,
+        filename: Some(filename),
+    }))
 }
 
 fn get_update_target_raw() -> String {
@@ -208,7 +330,10 @@ pub fn update_download(
     let session_id = DOWNLOAD_SESSION.fetch_add(1, Ordering::SeqCst) + 1;
 
     let client = reqwest::blocking::Client::builder()
-        .user_agent("aemeth-terminal-updater")
+        .user_agent(format!(
+            "aemeth-terminal/{} (+https://github.com/EnochRen/aemeth-terminal)",
+            env!("CARGO_PKG_VERSION")
+        ))
         .build()
         .map_err(|e| e.to_string())?;
 
