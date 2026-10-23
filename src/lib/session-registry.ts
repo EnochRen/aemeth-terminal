@@ -280,6 +280,8 @@ export type StatusListener = (appId: string, status: SessionStatus) => void;
 export type PortsListener = (appId: string, ports: number[]) => void;
 export type HealthListener = (appId: string, healthy: boolean) => void;
 
+const MAX_EARLY_OUTPUT_BYTES = 1024 * 1024;
+
 export class SessionRegistry {
   private clients = new Map<string, SessionClient>(); // sessionId -> client
   private appToSession = new Map<string, string>(); // appId -> sessionId
@@ -289,6 +291,7 @@ export class SessionRegistry {
   private starting = new Map<string, Promise<SessionClient>>();
   private stopping = new Map<string, Promise<void>>();
   private earlyExits = new Map<string, SessionStatus>();
+  private earlyOutput = new Map<string, { chunks: Uint8Array[]; size: number }>();
   private initialized = false;
 
   terminalFontSize = 13;
@@ -310,9 +313,10 @@ export class SessionRegistry {
     this.initialized = true;
     await listenPtyOutput(({ sessionId, data }) => {
       const client = this.clients.get(sessionId);
-      if (!client) return;
+      if (!client && this.starting.size === 0) return;
       const bytes = base64ToBytes(data);
-      client.term.write(bytes);
+      if (client) client.term.write(bytes);
+      else this.bufferEarlyOutput(sessionId, bytes);
     });
     await listenPtyExit((status) => {
       const client = this.clients.get(status.sessionId);
@@ -338,6 +342,30 @@ export class SessionRegistry {
       client.status = { ...client.status, healthy };
       for (const listener of this.healthListeners) listener(appId, healthy);
     });
+  }
+
+  private bufferEarlyOutput(sessionId: string, bytes: Uint8Array): void {
+    let pending = this.earlyOutput.get(sessionId);
+    if (!pending) {
+      // Unknown output can also belong to an old session; keep startup buffers
+      // bounded by both the number of pending launches and bytes per session.
+      if (this.earlyOutput.size >= this.starting.size) return;
+      pending = { chunks: [], size: 0 };
+      this.earlyOutput.set(sessionId, pending);
+    }
+    pending.chunks.push(bytes);
+    pending.size += bytes.length;
+    while (pending.size > MAX_EARLY_OUTPUT_BYTES) {
+      const first = pending.chunks[0];
+      const excess = pending.size - MAX_EARLY_OUTPUT_BYTES;
+      if (first.length <= excess) {
+        pending.chunks.shift();
+        pending.size -= first.length;
+      } else {
+        pending.chunks[0] = first.slice(excess);
+        pending.size -= excess;
+      }
+    }
   }
 
   onStatus(listener: StatusListener): () => void {
@@ -370,6 +398,7 @@ export class SessionRegistry {
     if (this.stopping.has(app.id)) return Promise.reject(new Error("already stopping"));
     const operation = this.startSession(app).finally(() => {
       this.starting.delete(app.id);
+      if (this.starting.size === 0) this.earlyOutput.clear();
       for (const [id, status] of this.earlyExits) {
         if (status.appId === app.id) this.earlyExits.delete(id);
       }
@@ -411,6 +440,11 @@ export class SessionRegistry {
     const client = new SessionClient(app, finalStatus);
     this.clients.set(status.sessionId, client);
     this.appToSession.set(app.id, status.sessionId);
+    const output = this.earlyOutput.get(status.sessionId);
+    if (output) {
+      client.term.write(concatBytes(output.chunks));
+      this.earlyOutput.delete(status.sessionId);
+    }
     this.emitStatus(app.id, finalStatus);
     return client;
   }

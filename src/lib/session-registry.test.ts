@@ -3,6 +3,7 @@ import type { AppConfig, SessionStatus } from "@/types";
 
 const ipc = vi.hoisted(() => ({
   start: vi.fn(), close: vi.fn(),
+  output: undefined as undefined | ((payload: { sessionId: string; data: string }) => void),
   exit: undefined as undefined | ((status: SessionStatus) => void),
   health: undefined as undefined | ((status: { sessionId: string; appId: string; healthy: boolean }) => void),
 }));
@@ -11,8 +12,9 @@ vi.mock("@/lib/pty", () => ({
   ptyStart: ipc.start,
   ptyClose: ipc.close,
   ptyWrite: vi.fn(), ptyResize: vi.fn(), openUrl: vi.fn(),
-  textEncoder: new TextEncoder(), base64ToBytes: vi.fn(),
-  listenPtyOutput: vi.fn(), listenPtyPorts: vi.fn(),
+  textEncoder: new TextEncoder(),
+  base64ToBytes: (data: string) => Uint8Array.from(atob(data), (char) => char.charCodeAt(0)),
+  listenPtyOutput: vi.fn((listener) => { ipc.output = listener; }), listenPtyPorts: vi.fn(),
   listenPtyExit: vi.fn((listener) => { ipc.exit = listener; }),
   listenHealth: vi.fn((listener) => { ipc.health = listener; }),
 }));
@@ -20,6 +22,7 @@ vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ readText: vi.fn(), writ
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
     unicode = { activeVersion: "" };
+    write = vi.fn();
     loadAddon() {}
     attachCustomKeyEventHandler() {}
     onData() {}
@@ -128,6 +131,48 @@ describe("session lifecycle", () => {
     ipc.exit!(status("old", "exited"));
     startup.resolve(status());
     expect((await starting).status.state).toBe("exited");
+  });
+
+  it("replays early output in order even if a short script already exited", async () => {
+    const startup = deferred<SessionStatus>();
+    ipc.start.mockReturnValue(startup.promise);
+    const starting = registry.start(app);
+    ipc.output!({ sessionId: "old", data: btoa("first\r\n") });
+    ipc.output!({ sessionId: "old", data: btoa("second\r\n") });
+    ipc.exit!(status("old", "exited"));
+    startup.resolve(status());
+    const client = await starting;
+    expect(client.term.write).toHaveBeenCalledWith(new TextEncoder().encode("first\r\nsecond\r\n"));
+    expect(client.status.state).toBe("exited");
+    ipc.output!({ sessionId: "old", data: btoa("tail\r\n") });
+    expect(client.term.write).toHaveBeenLastCalledWith(new TextEncoder().encode("tail\r\n"));
+  });
+
+  it("caps startup output and discards buffers after a failed launch", async () => {
+    const startup = deferred<SessionStatus>();
+    ipc.start.mockReturnValueOnce(startup.promise);
+    const starting = registry.start(app);
+    ipc.output!({ sessionId: "old", data: btoa("x".repeat(1024 * 1024 + 32)) });
+    ipc.output!({ sessionId: "old", data: btoa("tail") });
+    startup.resolve(status());
+    const client = await starting;
+    const replay = vi.mocked(client.term.write).mock.calls[0][0] as Uint8Array;
+    expect(replay.length).toBe(1024 * 1024);
+    expect(new TextDecoder().decode(replay.slice(-4))).toBe("tail");
+
+    const failed = deferred<SessionStatus>();
+    ipc.start.mockReturnValueOnce(failed.promise);
+    const failedStart = registry.start({ ...app, id: "other" });
+    ipc.output!({ sessionId: "failed", data: btoa("stale") });
+    failed.reject(new Error("spawn failed"));
+    await expect(failedStart).rejects.toThrow("spawn failed");
+
+    const retry = deferred<SessionStatus>();
+    ipc.start.mockReturnValueOnce(retry.promise);
+    const retried = registry.start({ ...app, id: "other" });
+    ipc.output!({ sessionId: "fresh", data: btoa("fresh") });
+    retry.resolve({ ...status("fresh"), appId: "other" });
+    expect((await retried).term.write).toHaveBeenCalledWith(new TextEncoder().encode("fresh"));
   });
 
   it("ignores health results from a previous session after restart", async () => {

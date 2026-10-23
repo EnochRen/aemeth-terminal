@@ -21,7 +21,10 @@ use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, Pt
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
-use crate::shells::{resolve_shell, ShellKind};
+use crate::{
+    preset::{PresetCommand, PresetScript},
+    shells::{resolve_shell, ShellKind},
+};
 
 pub const EVENT_OUTPUT: &str = "pty://output";
 pub const EVENT_EXIT: &str = "pty://exit";
@@ -38,16 +41,6 @@ const INITIAL_ROWS: u16 = 28;
 // queue shallow without adding latency for interactive output.
 const READ_BUF_SIZE: usize = 256 * 1024;
 
-/// One preset command line that is typed into the shell after startup.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PresetCommand {
-    pub command: String,
-    /// Milliseconds to wait after sending this line before the next one.
-    #[serde(default)]
-    pub delay_ms: u64,
-}
-
 /// Everything needed to spawn a session for an app.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,7 +50,7 @@ pub struct AppSpec {
     pub shell: ShellKind,
     #[serde(default)]
     pub cwd: Option<String>,
-    /// Milliseconds to wait for the shell prompt before sending preset commands.
+    /// Extra delay after shell initialization, before the first preset command.
     #[serde(default)]
     pub startup_delay_ms: u64,
     #[serde(default)]
@@ -194,22 +187,6 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn sleep_ms(ms: u64) {
-    if ms > 0 {
-        std::thread::sleep(std::time::Duration::from_millis(ms));
-    }
-}
-
-/// Suffix that terminates the shell once the last preset command returns,
-/// so a session with preset commands lives exactly as long as its service
-/// (docker-container semantics). Apps without commands stay interactive.
-fn exit_suffix(shell: ShellKind) -> &'static str {
-    match shell {
-        ShellKind::Cmd => " & exit",
-        _ => "; exit",
-    }
-}
-
 impl PtyManager {
     pub fn new() -> Self {
         Self::default()
@@ -250,6 +227,11 @@ impl PtyManager {
             for (k, v) in vars.iter() {
                 cmd.env(k, v);
             }
+        }
+
+        let presets = PresetScript::prepare(spec.shell, &spec.commands, spec.startup_delay_ms)?;
+        if let Some(script) = &presets {
+            script.configure(&mut cmd);
         }
 
         let mut child = pair.slave.spawn_command(cmd)?;
@@ -323,7 +305,6 @@ impl PtyManager {
         }
 
         // Reaper: blocks until the shell exits, then notifies the webview.
-        let scheduler_handle = handle.clone();
         {
             let app = app.clone();
             let manager = self.clone();
@@ -333,6 +314,7 @@ impl PtyManager {
                 .spawn(move || {
                     // The reaper owns the child exclusively — no lock needed.
                     let exit_code = child.wait().ok().map(|st| st.exit_code());
+                    drop(presets);
                     // The shell can die before its descendants. Publish exit
                     // only after a concurrent tree cleanup releases this gate.
                     let mut closing = handle.close_lock.lock();
@@ -432,54 +414,6 @@ impl PtyManager {
                             healthy: ok,
                         },
                     );
-                })?;
-        }
-
-        // Preset command scheduler: types the configured lines into the shell.
-        if !spec.commands.is_empty() {
-            tracing::info!(
-                session_id = %session_id,
-                count = spec.commands.len(),
-                "scheduling preset commands",
-            );
-            let handle = scheduler_handle;
-            let shell = spec.shell;
-            let startup_delay = spec.startup_delay_ms;
-            let commands = spec.commands.clone();
-            let session_id = session_id.clone();
-            std::thread::Builder::new()
-                .name(format!("pty-cmds-{session_id}"))
-                .spawn(move || {
-                    sleep_ms(startup_delay);
-                    let last = commands.len().saturating_sub(1);
-                    for (idx, preset) in commands.iter().enumerate() {
-                        if !handle.alive.load(Ordering::SeqCst)
-                            || handle.killed.load(Ordering::SeqCst)
-                        {
-                            break;
-                        }
-                        let mut line = preset.command.trim_end().to_string();
-                        if idx == last {
-                            // Tie the shell's lifetime to the service: when
-                            // the last command returns, the shell exits too.
-                            line = if line.is_empty() {
-                                "exit".to_string()
-                            } else {
-                                format!("{}{}", line, exit_suffix(shell))
-                            };
-                        }
-                        line.push('\r');
-                        if let Err(error) = handle.writer.lock().write_all(line.as_bytes()) {
-                            tracing::error!(
-                                %session_id,
-                                command_index = idx,
-                                %error,
-                                "failed to write preset command to pty"
-                            );
-                            break;
-                        }
-                        sleep_ms(preset.delay_ms);
-                    }
                 })?;
         }
 

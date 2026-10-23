@@ -30,7 +30,7 @@ import { useT } from "@/i18n/use-t";
 import { useAppStore } from "@/store/use-app-store";
 import { APP_COLORS, type AppConfig, type PresetCommand, type ShellKind } from "@/types";
 
-const DEFAULT_COMMAND_DELAY = 400;
+const DEFAULT_COMMAND_DELAY = 0;
 
 function parseTags(input: string): string[] | undefined {
   const tags = input
@@ -77,7 +77,7 @@ export function AppDialog() {
   const [color, setColor] = useState<string>(APP_COLORS[0]);
   const [shell, setShell] = useState<ShellKind>("powershell");
   const [cwd, setCwd] = useState("");
-  const [startupDelayMs, setStartupDelayMs] = useState(600);
+  const [startupDelayMs, setStartupDelayMs] = useState(0);
   const [commands, setCommands] = useState<PresetCommand[]>([]);
   const [autoStart, setAutoStart] = useState(false);
   const [envEntries, setEnvEntries] = useState<{ key: string; value: string }[]>([]);
@@ -111,7 +111,7 @@ export function AppDialog() {
       setTags("");
       setShell(defaultShell());
       setCwd("");
-      setStartupDelayMs(600);
+      setStartupDelayMs(0);
       setCommands([]);
       setAutoStart(false);
       setEnvEntries([]);
@@ -307,13 +307,18 @@ export function AppDialog() {
             {/* ──────────── Runtime ──────────── */}
             <TabsContent value="runtime" className="mt-0 space-y-5">
               <div className="grid gap-2">
-                <div className="flex items-center justify-between">
+                <div className="space-y-1.5">
                   <Label>{t.dialog.commands}</Label>
-                  <span className="text-[11px] text-muted-foreground">
+                  <p className="text-[11px] leading-relaxed text-muted-foreground">
                     {t.dialog.commandsHint}
-                  </span>
+                  </p>
                 </div>
                 <div className="space-y-2">
+                  {commands.length > 0 && (
+                    <div className="pr-10 text-right text-[11px] text-muted-foreground">
+                      {t.dialog.commandDelay}
+                    </div>
+                  )}
                   {commands.map((c, i) => (
                     <div key={i} className="flex items-center gap-2">
                       <span className="w-5 text-right font-mono text-xs text-[#525252]">
@@ -323,15 +328,19 @@ export function AppDialog() {
                         value={c.command}
                         onChange={(e) => updateCommand(i, { command: e.target.value })}
                         placeholder={i === 0 ? t.dialog.cmdPlaceholder1 : t.dialog.cmdPlaceholder2}
-                        className="flex-1 font-mono text-xs"
+                        className="min-w-0 flex-1 font-mono text-xs"
                       />
-                      <div className="relative w-28">
+                      <div className="relative w-28 shrink-0">
                         <Input
                           type="number"
                           min={0}
                           step={100}
                           value={c.delayMs}
-                          onChange={(e) => updateCommand(i, { delayMs: Number(e.target.value) || 0 })}
+                          aria-label={`${i + 1}. ${t.dialog.commandDelay}`}
+                          title={t.dialog.commandDelayHint}
+                          onChange={(e) => updateCommand(i, {
+                            delayMs: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                          })}
                           className="pr-8 text-xs"
                         />
                         <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">

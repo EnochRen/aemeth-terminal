@@ -33,7 +33,7 @@ export interface StartSpec {
   shell: AppConfig["shell"];
   cwd: string | null;
   startupDelayMs: number;
-  commands: { command: string; delayMs: number }[];
+  commands: AppConfig["commands"];
   envVars?: Record<string, string>;
   healthCheckUrl?: string;
 }

@@ -10,7 +10,7 @@ export interface ShellInfo {
 
 export interface PresetCommand {
   command: string;
-  /** Milliseconds to wait after sending this line before the next one. */
+  /** Extra pause after this command succeeds, before the next command. */
   delayMs: number;
 }
 
@@ -20,7 +20,7 @@ export interface AppConfig {
   shell: ShellKind;
   cwd: string | null;
   commands: PresetCommand[];
-  /** Milliseconds to wait for the shell prompt before sending preset commands. */
+  /** Extra delay after shell initialization, before the first preset command. */
   startupDelayMs: number;
   /** Tags used to group apps together (workspace). */
   tags?: string[];

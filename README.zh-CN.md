@@ -23,7 +23,7 @@
 ## 功能特性
 
 - 🗂️ **应用卡片** — 每个服务一张卡片：名称、颜色、Shell 类型、工作目录、启动序列一览，以及实时运行状态（运行中 / 已退出·退出码 / 未运行）。
-- ⚡ **启动序列** — 为每个应用配置按序执行的指令（如 `cd E:\project\api` → `yarn dev`），每条指令可单独设置发送间隔，并支持"等待 Shell 就绪"的启动延时。
+- ⚡ **启动序列** — 指令在同一个 Shell 内依次执行，上一条成功后才开始下一条（如 `git pull` → `yarn` → `yarn dev`）；失败时停止并保留退出码。可设置成功后的额外等待与启动延迟，通常设为 0 即可。指令留空则打开交互式 Shell。
 - 🐚 **多 Shell 支持** — 每个应用可独立选择 **PowerShell / PowerShell 7 (pwsh) / CMD / Git Bash**，自动探测本机可用 Shell。
 - 🖥️ **终端工作台** — Win11 风格标签页，会话常驻内存、一键切换；中键关闭标签、右键复制/粘贴（保留经典控制台的操作习惯）。
 - 🚀 **随应用启动** — 勾选后打开 Aemeth 即自动拉起对应服务。
@@ -32,6 +32,8 @@
 - 🔤 **字体排印** — 西文 Geist Sans / Geist Mono，中文 Noto Sans SC——UI 与终端共用同一字体栈。
 - 🧹 **退出即清理** — 关闭窗口时自动终止所有派生 Shell 进程。
 - ⚫ **Geist / Vercel 风格视觉** — 纯黑画布、发丝级边框，颜色只用于状态语义。
+
+预设指令使用所选 Shell 的脚本语法，例如 CMD 的 `for` 循环变量写作 `%%i`。显式在后台启动的程序仍遵循 Shell 的后台执行规则；后续步骤需要等待时，请以前台方式执行。
 
 ## 两个界面
 
@@ -86,12 +88,13 @@ pnpm tauri build    # 生产构建 → src-tauri/target/release/bundle
 │    │                                  cmd / bash / pwsh │
 │    ├─ reader 线程 ──► pty://output（base64 事件）        │
 │    ├─ reaper 线程 ──► pty://exit  （退出码）            │
-│    └─ scheduler  ──► 按延时逐条写入启动指令              │
+│    └─ presets    ──► Shell 内顺序执行启动脚本            │
 └────────────────────────────────────────────────────────┘
 ```
 
 - **`src-tauri/src/pty.rs`** — 会话生命周期：启动、写入、resize、kill、事件流。输出以 base64 分片，避免截断 UTF-8 序列。
 - **`src-tauri/src/shells.rs`** — Shell 探测与解析（PATH + 常见安装路径）。
+- **`src-tauri/src/preset.rs`** — 临时 Shell 脚本、顺序执行、完成后等待与失败退出码。
 - **`src/lib/session-registry.ts`** — xterm 实例池；终端在会话启动时即创建，切换视图不丢输出。
 - **`src/store/use-app-store.ts`** — 全局状态 + `tauri-plugin-store` 持久化。
 

@@ -23,7 +23,7 @@ Running a microservice stack locally usually means juggling a dozen console wind
 ## Features
 
 - 🗂️ **App cards** — one card per service: name, color, shell type, working directory, boot sequence, and live status (running / exited with code / stopped).
-- ⚡ **Boot sequences** — configure ordered commands per app (e.g. `cd E:\project\api` → `yarn dev`), with a per-command send delay and an optional "wait for shell ready" startup delay.
+- ⚡ **Boot sequences** — commands run in the same shell, each waiting for the previous one to succeed (e.g. `git pull` → `yarn` → `yarn dev`). Failures stop the sequence and preserve the exit code. Optional delays add a pause after success or before the first command; zero is sufficient for normal use. Leave commands empty for an interactive shell.
 - 🐚 **Multi-shell** — each app picks its own shell: **PowerShell / PowerShell 7 (pwsh) / CMD / Git Bash**, auto-detected from your machine.
 - 🖥️ **Terminal workbench** — Windows 11-style tabs; sessions stay resident in memory for instant switching. Middle-click to close a tab, right-click to copy/paste (classic console muscle memory).
 - 🚀 **Auto-launch** — mark apps to start automatically when Aemeth opens.
@@ -32,6 +32,8 @@ Running a microservice stack locally usually means juggling a dozen console wind
 - 🔤 **Typography** — Geist Sans / Geist Mono for Latin, Noto Sans SC for CJK — in the UI *and* the terminal.
 - 🧹 **Clean exit** — closing the window terminates every spawned shell process.
 - ⚫ **Geist / Vercel-inspired visuals** — pure black canvas, hairline borders, color reserved for status semantics.
+
+Presets use the selected shell's script syntax; for example, CMD `for` loops use `%%i` for loop variables. Commands explicitly launched in the background still follow that shell's background behavior—run them in the foreground when later steps must wait.
 
 ## Two surfaces
 
@@ -86,12 +88,13 @@ pnpm tauri build    # production build → src-tauri/target/release/bundle
 │    │                                  cmd / bash / pwsh │
 │    ├─ reader thread ──► pty://output (base64 events)   │
 │    ├─ reaper thread ──► pty://exit   (exit codes)      │
-│    └─ scheduler   ──► feeds boot commands by delay     │
+│    └─ presets     ──► shell-owned sequential script   │
 └────────────────────────────────────────────────────────┘
 ```
 
 - **`src-tauri/src/pty.rs`** — session lifecycle: spawn, write, resize, kill, event stream. Output is chunked as base64 to avoid splitting UTF-8 sequences.
 - **`src-tauri/src/shells.rs`** — shell detection & resolution (PATH + common install locations).
+- **`src-tauri/src/preset.rs`** — temporary shell programs, sequential execution, completion delays, and failure exit codes.
 - **`src/lib/session-registry.ts`** — xterm instance pool; terminals are created when a session starts, so switching views never loses output.
 - **`src/store/use-app-store.ts`** — global state + persistence via `tauri-plugin-store`.
 
