@@ -1,7 +1,10 @@
 use super::*;
 use std::{
     io::{Read, Write},
-    sync::mpsc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
     time::{Duration, Instant},
 };
 
@@ -60,16 +63,24 @@ fn run(
     drop(pair.slave);
     let mut master = Some(pair.master);
     let (sender, receiver) = mpsc::channel();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let reader_stopped = stopped.clone();
     let reader_thread = std::thread::spawn(move || {
         let mut buffer = [0; 8192];
-        while let Ok(count) = reader.read(&mut buffer) {
-            if count == 0 || sender.send(buffer[..count].to_vec()).is_err() {
-                break;
+        while !reader_stopped.load(Ordering::Acquire) {
+            match reader.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(count) => {
+                    if sender.send(buffer[..count].to_vec()).is_err() {
+                        break;
+                    }
+                }
             }
         }
     });
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut output = Vec::new();
+    let mut cursor_search = 0;
     let mut input_sent = false;
     let mut exit = None;
     loop {
@@ -77,11 +88,16 @@ fn run(
             Ok(bytes) => {
                 output.extend_from_slice(&bytes);
                 // Console hosts may query cursor position before reading input.
-                if output.ends_with(b"\x1b[6n") {
+                if output[cursor_search..]
+                    .windows(4)
+                    .any(|bytes| bytes == b"\x1b[6n")
+                {
                     if let Some(writer) = &mut writer {
                         writer.write_all(b"\x1b[1;1R").unwrap();
+                        writer.flush().unwrap();
                     }
                 }
+                cursor_search = output.len().saturating_sub(3);
                 if let Some(input) = input.filter(|_| !input_sent) {
                     if String::from_utf8_lossy(&output).contains("AEMETH_INPUT_READY:") {
                         let writer = writer.as_mut().unwrap();
@@ -97,15 +113,21 @@ fn run(
         if exit.is_none() {
             exit = child.try_wait().unwrap();
             if exit.is_some() {
-                // Like the session reaper, release ConPTY once the child exits
-                // so the reader can receive EOF and drain its final output.
+                // Process exit is authoritative. ConPTY can keep the output
+                // pipe open after its final shutdown frame when several PTYs
+                // run concurrently; stop the reader after that pending read.
+                stopped.store(true, Ordering::Release);
                 drop(writer.take());
                 drop(master.take());
             }
         }
         if Instant::now() >= deadline {
             let _ = child.kill();
-            panic!("{shell:?} timed out: {}", String::from_utf8_lossy(&output));
+            panic!(
+                "{shell:?} timed out (exit: {exit:?}, reader finished: {}): {}",
+                reader_thread.is_finished(),
+                String::from_utf8_lossy(&output)
+            );
         }
     }
     let exit = exit.unwrap_or_else(|| child.wait().unwrap()).exit_code();
