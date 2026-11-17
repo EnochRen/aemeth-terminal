@@ -39,6 +39,7 @@ export function TerminalPane({ appId, active }: TerminalPaneProps) {
   const session = useAppStore((s) => s.sessions[appId]);
   const app = useAppStore((s) => s.apps.find((a) => a.id === appId));
   const restartApp = useAppStore((s) => s.restartApp);
+  const stopApp = useAppStore((s) => s.stopApp);
   const closeTab = useAppStore((s) => s.closeTab);
 
   const [searchOpen, setSearchOpen] = useState(false);
@@ -189,6 +190,15 @@ export function TerminalPane({ appId, active }: TerminalPaneProps) {
               >
                 {app?.kind === "script" ? t.pane.rerun : t.pane.restart}
               </button>
+              {session.state === "running" && (
+                <button
+                  type="button"
+                  onClick={() => void stopApp(appId)}
+                  className="font-mono text-[11px] text-foreground underline decoration-[#333] underline-offset-4 hover:decoration-foreground"
+                >
+                  {t.pane.stop}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => closeTab(appId)}

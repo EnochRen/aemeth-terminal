@@ -131,6 +131,7 @@ const zh = {
     duration: "耗时 {t}s",
     restart: "重启",
     rerun: "重新执行",
+    stop: "停止",
     close: "关闭",
   },
   menu: {
@@ -392,6 +393,7 @@ const en: Dict = {
     duration: "{t}s",
     restart: "restart",
     rerun: "re‑run",
+    stop: "stop",
     close: "close",
   },
   menu: {
