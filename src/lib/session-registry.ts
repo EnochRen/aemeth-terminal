@@ -16,8 +16,10 @@ import {
   listenPtyExit,
   listenPtyOutput,
   listenPtyPorts,
+  listenPtyStopError,
   openUrl,
   ptyClose,
+  ptyCloseFast,
   ptyResize,
   ptyStart,
   ptyWrite,
@@ -279,6 +281,7 @@ function concatBytes(chunks: Uint8Array[]): Uint8Array {
 export type StatusListener = (appId: string, status: SessionStatus) => void;
 export type PortsListener = (appId: string, ports: number[]) => void;
 export type HealthListener = (appId: string, healthy: boolean) => void;
+export type StopErrorListener = (appId: string, sessionId: string, error: string) => void;
 
 const MAX_EARLY_OUTPUT_BYTES = 1024 * 1024;
 
@@ -288,8 +291,11 @@ export class SessionRegistry {
   private statusListeners = new Set<StatusListener>();
   private portsListeners = new Set<PortsListener>();
   private healthListeners = new Set<HealthListener>();
+  private stopErrorListeners = new Set<StopErrorListener>();
   private starting = new Map<string, Promise<SessionClient>>();
   private stopping = new Map<string, Promise<void>>();
+  private restarting = new Map<string, Promise<SessionClient>>();
+  private retiredSessions = new Set<string>();
   private earlyExits = new Map<string, SessionStatus>();
   private earlyOutput = new Map<string, { chunks: Uint8Array[]; size: number }>();
   private initialized = false;
@@ -312,6 +318,7 @@ export class SessionRegistry {
     if (this.initialized) return;
     this.initialized = true;
     await listenPtyOutput(({ sessionId, data }) => {
+      if (this.retiredSessions.has(sessionId)) return;
       const client = this.clients.get(sessionId);
       if (!client && this.starting.size === 0) return;
       const bytes = base64ToBytes(data);
@@ -319,6 +326,7 @@ export class SessionRegistry {
       else this.bufferEarlyOutput(sessionId, bytes);
     });
     await listenPtyExit((status) => {
+      if (this.retiredSessions.has(status.sessionId)) return;
       const client = this.clients.get(status.sessionId);
       if (client) {
         client.status = status;
@@ -341,6 +349,9 @@ export class SessionRegistry {
       if (!client) return;
       client.status = { ...client.status, healthy };
       for (const listener of this.healthListeners) listener(appId, healthy);
+    });
+    await listenPtyStopError(({ appId, sessionId, error }) => {
+      for (const listener of this.stopErrorListeners) listener(appId, sessionId, error);
     });
   }
 
@@ -381,6 +392,11 @@ export class SessionRegistry {
   onHealth(listener: HealthListener): () => void {
     this.healthListeners.add(listener);
     return () => this.healthListeners.delete(listener);
+  }
+
+  onStopError(listener: StopErrorListener): () => void {
+    this.stopErrorListeners.add(listener);
+    return () => this.stopErrorListeners.delete(listener);
   }
 
   private emitStatus(appId: string, status: SessionStatus): void {
@@ -454,9 +470,16 @@ export class SessionRegistry {
    * yields to the UI; the backend command completes after tree cleanup.
    */
   stop(appId: string): Promise<void> {
+    // A restart may be between the fast stop and registration of its new
+    // session. Wait for that transition so callers (including delete) stop
+    // the replacement rather than returning while it is still being started.
+    const restart = this.restarting.get(appId);
+    if (restart) return restart.catch(() => undefined).then(() => this.stop(appId));
     const pending = this.stopping.get(appId);
     if (pending) return pending;
-    const operation = this.stopSession(appId).finally(() => this.stopping.delete(appId));
+    const operation = this.stopSession(appId).finally(() => {
+      if (this.stopping.get(appId) === operation) this.stopping.delete(appId);
+    });
     this.stopping.set(appId, operation);
     return operation;
   }
@@ -473,12 +496,12 @@ export class SessionRegistry {
       await ptyClose(client.sessionId);
       // IPC responses and exit events have independent queues. A successful
       // close already guarantees exit even if its event has not arrived yet.
-      if (client.status.state === "stopping") {
+      if (client.status.state === "stopping" && this.getByApp(appId) === client) {
         client.status = { ...client.status, state: "exited", killed: true, exitCode: 0 };
         this.emitStatus(appId, client.status);
       }
     } catch (error) {
-      if (client.status.state === "stopping") {
+      if (client.status.state === "stopping" && this.getByApp(appId) === client) {
         client.status = previous;
         this.emitStatus(appId, previous);
       }
@@ -489,20 +512,45 @@ export class SessionRegistry {
   remove(appId: string): void {
     const sessionId = this.appToSession.get(appId);
     if (!sessionId) return;
+    // Old sessions can still deliver events during a replacement launch.
+    // Remember recent IDs so they cannot occupy the new session's early buffer.
+    this.retiredSessions.add(sessionId);
+    if (this.retiredSessions.size > 256) this.retiredSessions.delete(this.retiredSessions.values().next().value!);
     this.clients.get(sessionId)?.dispose();
     this.clients.delete(sessionId);
     this.appToSession.delete(appId);
   }
 
-  /**
-   * Kill the current session (if any) and spawn a fresh one.
-   *
-   * The kill is awaited before `remove()` so the reaper still finds the client
-   * and the old process tree is gone before a new one binds the same ports.
-   */
-  async restart(app: AppConfig): Promise<SessionClient> {
-    await this.stop(app.id);
+  /** Issue forceful termination, then launch without waiting for old cleanup. */
+  restart(app: AppConfig): Promise<SessionClient> {
+    const pending = this.restarting.get(app.id);
+    if (pending) return pending;
+    const operation = this.restartSession(app).finally(() => this.restarting.delete(app.id));
+    this.restarting.set(app.id, operation);
+    return operation;
+  }
+
+  private async restartSession(app: AppConfig): Promise<SessionClient> {
+    const startup = this.starting.get(app.id);
+    if (startup) await startup.catch(() => undefined);
+    const client = this.getByApp(app.id);
+    if (client && (client.status.state === "running" || client.status.state === "stopping")) {
+      const previous = client.status;
+      client.status = { ...client.status, state: "stopping" };
+      this.emitStatus(app.id, client.status);
+      try {
+        await ptyCloseFast(client.sessionId);
+      } catch (error) {
+        if (client.status.state === "stopping" && this.getByApp(app.id) === client) {
+          client.status = previous;
+          this.emitStatus(app.id, previous);
+        }
+        throw error;
+      }
+    }
     this.remove(app.id);
+    // An earlier ordinary stop may still be waiting for the old reaper.
+    this.stopping.delete(app.id);
     return this.start(app);
   }
 

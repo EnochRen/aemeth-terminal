@@ -144,30 +144,62 @@ pub fn detail(pid: u32) -> Option<ProcessDetail> {
     })
 }
 
-/// Force-kill `root` and every descendant (children first). Returns the number
-/// of processes terminated.
-pub fn kill_tree(root: u32) -> Result<usize, String> {
-    let mut slot = lock_system();
-    let system = slot.get_or_insert_with(System::new_all);
+/// Force-kill the selected process and its verified descendants, children first.
+/// Parent PIDs can be reused, so an older process is never treated as a child
+/// of a newer parent. Unknown timestamps cannot establish ancestry safely.
+pub fn kill_tree(root: u32, expected_start: u64) -> Result<usize, String> {
+    let mut system = System::new();
     system.refresh_processes(ProcessesToUpdate::All, true);
-
-    if system.processes().get(&Pid::from_u32(root)).is_none() {
-        return Err("process not found".into());
+    let root_process = system
+        .process(Pid::from_u32(root))
+        .ok_or("process already exited")?;
+    if expected_start != 0 && root_process.start_time() != expected_start {
+        return Err("process changed since the list was displayed; refresh and try again".into());
     }
 
     let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
-    for (pid, p) in system.processes() {
-        if let Some(parent) = p.parent() {
-            children.entry(parent.as_u32()).or_default().push(pid.as_u32());
+    let mut uncertain_children: HashMap<u32, Vec<u32>> = HashMap::new();
+    for (pid, process) in system.processes() {
+        if let Some(parent) = process.parent() {
+            if let Some(parent_process) = system.process(parent) {
+                let parent_start = parent_process.start_time();
+                let child_start = process.start_time();
+                if parent_start == 0 || child_start == 0 {
+                    uncertain_children
+                        .entry(parent.as_u32())
+                        .or_default()
+                        .push(pid.as_u32());
+                } else if child_start >= parent_start {
+                    children
+                        .entry(parent.as_u32())
+                        .or_default()
+                        .push(pid.as_u32());
+                }
+            }
         }
     }
-
-    // BFS from root; reversed, children are killed before their parent.
     let mut order = Vec::new();
     let mut seen = HashSet::from([root]);
     let mut stack = vec![root];
+    let mut failures = Vec::new();
     while let Some(pid) = stack.pop() {
-        order.push(pid);
+        if let Some(process) = system.process(Pid::from_u32(pid)) {
+            order.push((
+                pid,
+                if pid == root {
+                    expected_start
+                } else {
+                    process.start_time()
+                },
+            ));
+        }
+        if let Some(kids) = uncertain_children.get(&pid) {
+            for kid in kids {
+                failures.push(format!(
+                    "PID {kid}: could not verify parent relationship; skipped"
+                ));
+            }
+        }
         if let Some(kids) = children.get(&pid) {
             for &kid in kids {
                 if seen.insert(kid) {
@@ -178,15 +210,131 @@ pub fn kill_tree(root: u32) -> Result<usize, String> {
     }
 
     let mut killed = 0;
-    for pid in order.iter().rev() {
-        if let Some(p) = system.processes().get(&Pid::from_u32(*pid)) {
-            if p.kill() {
-                killed += 1;
+    for &(pid, start) in order.iter().rev() {
+        match force_terminate(&system, pid, start) {
+            Ok(true) => killed += 1,
+            Ok(false) if pid == root => {
+                failures.push(format!("PID {pid}: process already exited or changed"))
             }
+            Ok(false) => {} // A descendant already exited or its PID was reused.
+            Err(error) => failures.push(format!("PID {pid}: {error}")),
         }
     }
-    if killed == 0 {
-        return Err("permission denied".into());
+    if !failures.is_empty() {
+        return Err(format!(
+            "{killed} process(es) stopped; failed to stop {}",
+            failures.join("; ")
+        ));
     }
     Ok(killed)
+}
+
+#[cfg(windows)]
+fn force_terminate(_system: &System, pid: u32, expected_start: u64) -> Result<bool, String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{
+        GetProcessTimes, OpenProcess, TerminateProcess, WaitForSingleObject,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+    };
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    // A handle pins the process object, avoiding a PID reuse race after opening.
+    let handle = unsafe {
+        OpenProcess(
+            PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE,
+            0,
+            pid,
+        )
+    };
+    if handle.is_null() {
+        let error = std::io::Error::last_os_error();
+        return match error.raw_os_error() {
+            Some(87) => Ok(false), // PID no longer exists.
+            Some(5) => Err("access denied; run Aemeth Terminal as administrator if appropriate (Windows may protect this process)".into()),
+            _ => Err(error.to_string()),
+        };
+    }
+    let result = (|| {
+        let mut creation = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let mut exit = creation;
+        let mut kernel = creation;
+        let mut user = creation;
+        if unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) } == 0
+        {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        let ticks = (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime);
+        let actual_start = (ticks / 10_000_000).saturating_sub(11_644_473_600);
+        if expected_start == 0 {
+            return Err("cannot verify the process identity; refresh and try again".into());
+        }
+        if actual_start != expected_start {
+            return Ok(false);
+        }
+        if unsafe { WaitForSingleObject(handle, 0) } == WAIT_OBJECT_0 {
+            return Ok(false);
+        }
+        if unsafe { TerminateProcess(handle, 1) } == 0 {
+            let error = std::io::Error::last_os_error();
+            if unsafe { WaitForSingleObject(handle, 0) } == WAIT_OBJECT_0 {
+                return Ok(false);
+            }
+            return Err(error.to_string());
+        }
+        if unsafe { WaitForSingleObject(handle, 2000) } != WAIT_OBJECT_0 {
+            return Err("termination requested, but the process did not exit in time".into());
+        }
+        Ok(true)
+    })();
+    unsafe {
+        CloseHandle(handle);
+    }
+    result
+}
+
+#[cfg(not(windows))]
+fn force_terminate(system: &System, pid: u32, expected_start: u64) -> Result<bool, String> {
+    let Some(process) = system.process(Pid::from_u32(pid)) else {
+        return Ok(false);
+    };
+    if expected_start == 0 || process.start_time() != expected_start {
+        return Err("cannot verify the process identity; refresh and try again".into());
+    }
+    if process.kill() {
+        Ok(true)
+    } else {
+        Err(
+            "termination failed; the process may have exited or require additional permissions"
+                .into(),
+        )
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminates_only_the_matching_process_identity() {
+        use std::os::windows::process::CommandExt;
+        let mut child = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 30"])
+            .creation_flags(0x0800_0000)
+            .spawn()
+            .expect("spawn test process");
+        let pid = child.id();
+        let mut system = System::new_all();
+        system.refresh_processes(ProcessesToUpdate::All, true);
+        let start = system
+            .process(Pid::from_u32(pid))
+            .expect("test process in snapshot")
+            .start_time();
+        assert_ne!(start, 0);
+        assert!(!force_terminate(&system, pid, start + 1).expect("different identity is safe"));
+        assert!(child.try_wait().expect("check child").is_none());
+        assert!(force_terminate(&system, pid, start).expect("terminate child"));
+        assert!(child.wait().is_ok());
+    }
 }

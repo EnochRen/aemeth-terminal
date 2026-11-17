@@ -2,20 +2,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig, SessionStatus } from "@/types";
 
 const ipc = vi.hoisted(() => ({
-  start: vi.fn(), close: vi.fn(),
+  start: vi.fn(), close: vi.fn(), closeFast: vi.fn(),
   output: undefined as undefined | ((payload: { sessionId: string; data: string }) => void),
   exit: undefined as undefined | ((status: SessionStatus) => void),
   health: undefined as undefined | ((status: { sessionId: string; appId: string; healthy: boolean }) => void),
+  stopError: undefined as undefined | ((status: { sessionId: string; appId: string; error: string }) => void),
 }));
 
 vi.mock("@/lib/pty", () => ({
   ptyStart: ipc.start,
   ptyClose: ipc.close,
+  ptyCloseFast: ipc.closeFast,
   ptyWrite: vi.fn(), ptyResize: vi.fn(), openUrl: vi.fn(),
   textEncoder: new TextEncoder(),
   base64ToBytes: (data: string) => Uint8Array.from(atob(data), (char) => char.charCodeAt(0)),
   listenPtyOutput: vi.fn((listener) => { ipc.output = listener; }), listenPtyPorts: vi.fn(),
   listenPtyExit: vi.fn((listener) => { ipc.exit = listener; }),
+  listenPtyStopError: vi.fn((listener) => { ipc.stopError = listener; }),
   listenHealth: vi.fn((listener) => { ipc.health = listener; }),
 }));
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ readText: vi.fn(), writeText: vi.fn() }));
@@ -55,6 +58,7 @@ describe("session lifecycle", () => {
     vi.clearAllMocks();
     ipc.start.mockResolvedValue(status());
     ipc.close.mockResolvedValue(undefined);
+    ipc.closeFast.mockResolvedValue(undefined);
     registry = new SessionRegistry();
     await registry.init();
   });
@@ -74,24 +78,84 @@ describe("session lifecycle", () => {
     expect(client.status.state).toBe("exited");
   });
 
-  it("waits for old cleanup before starting a replacement", async () => {
+  it("starts a replacement after force termination is requested without waiting for cleanup", async () => {
     await registry.start(app);
     const cleanup = deferred<void>();
     ipc.close.mockReturnValue(cleanup.promise);
     ipc.start.mockResolvedValue(status("new"));
     const stopping = registry.stop(app.id);
     const restarting = registry.restart(app);
-    await Promise.resolve();
-    expect(ipc.start).toHaveBeenCalledTimes(1);
+    expect((await restarting).sessionId).toBe("new");
+    expect(ipc.closeFast).toHaveBeenCalledWith("old");
+    expect(ipc.start).toHaveBeenCalledTimes(2);
     cleanup.resolve();
     await stopping;
-    expect((await restarting).sessionId).toBe("new");
-    expect(ipc.start).toHaveBeenCalledTimes(2);
+    expect(registry.getByApp(app.id)?.status.state).toBe("running");
+  });
+
+  it("shares concurrent restarts and reports background cleanup errors", async () => {
+    await registry.start(app);
+    const issued = deferred<void>();
+    ipc.closeFast.mockReturnValue(issued.promise);
+    ipc.start.mockResolvedValue(status("new"));
+    const failed = vi.fn();
+    registry.onStopError(failed);
+    const restarting = registry.restart(app);
+    expect(registry.restart(app)).toBe(restarting);
+    expect(ipc.closeFast).toHaveBeenCalledTimes(1);
+    expect(ipc.start).toHaveBeenCalledTimes(1);
+    issued.resolve();
+    await restarting;
+    ipc.stopError!({ sessionId: "old", appId: app.id, error: "access denied" });
+    expect(failed).toHaveBeenCalledWith(app.id, "old", "access denied");
+  });
+
+  it("stops the replacement when a stop is requested while restart is issuing the kill", async () => {
+    await registry.start(app);
+    const issued = deferred<void>();
+    ipc.closeFast.mockReturnValue(issued.promise);
+    ipc.start.mockResolvedValue(status("new"));
+    const restarting = registry.restart(app);
+    const stopping = registry.stop(app.id);
+    issued.resolve();
+    await restarting;
+    await stopping;
+    expect(ipc.close).toHaveBeenCalledWith("new");
+    expect(registry.getByApp(app.id)?.status.state).toBe("exited");
+  });
+
+  it("stops the replacement when a stop is requested while it is starting", async () => {
+    await registry.start(app);
+    const startup = deferred<SessionStatus>();
+    ipc.start.mockReturnValue(startup.promise);
+    const restarting = registry.restart(app);
+    await Promise.resolve();
+    await Promise.resolve();
+    const stopping = registry.stop(app.id);
+    startup.resolve(status("new"));
+    await restarting;
+    await stopping;
+    expect(ipc.close).toHaveBeenCalledWith("new");
+    expect(registry.getByApp(app.id)?.status.state).toBe("exited");
+  });
+
+  it("retries the old session when a pending restart fails to issue termination", async () => {
+    await registry.start(app);
+    const issued = deferred<void>();
+    ipc.closeFast.mockReturnValue(issued.promise);
+    const restarting = registry.restart(app);
+    const stopping = registry.stop(app.id);
+    issued.reject(new Error("some termination requests failed"));
+    await expect(restarting).rejects.toThrow("some termination requests failed");
+    await stopping;
+    expect(ipc.start).toHaveBeenCalledTimes(1);
+    expect(ipc.close).toHaveBeenCalledWith("old");
+    expect(registry.getByApp(app.id)?.status.state).toBe("exited");
   });
 
   it("restores a failed stop so it can be retried, and does not restart on failure", async () => {
     const client = await registry.start(app);
-    ipc.close.mockRejectedValueOnce(new Error("permission denied"));
+    ipc.closeFast.mockRejectedValueOnce(new Error("permission denied"));
     await expect(registry.restart(app)).rejects.toThrow("permission denied");
     expect(client.status.state).toBe("running");
     expect(registry.getByApp(app.id)).toBe(client);
@@ -183,5 +247,21 @@ describe("session lifecycle", () => {
     expect(current.status.healthy).toBeUndefined();
     ipc.health!({ sessionId: "new", appId: app.id, healthy: true });
     expect(current.status.healthy).toBe(true);
+  });
+
+  it("ignores retired session output and exit while the replacement starts", async () => {
+    await registry.start(app);
+    const startup = deferred<SessionStatus>();
+    ipc.start.mockReturnValueOnce(startup.promise);
+    const restarting = registry.restart(app);
+    await Promise.resolve();
+    await Promise.resolve();
+    ipc.output!({ sessionId: "old", data: btoa("old") });
+    ipc.exit!(status("old", "exited"));
+    ipc.output!({ sessionId: "new", data: btoa("new") });
+    startup.resolve(status("new"));
+    const client = await restarting;
+    expect(client.status.state).toBe("running");
+    expect(client.term.write).toHaveBeenCalledWith(new TextEncoder().encode("new"));
   });
 });

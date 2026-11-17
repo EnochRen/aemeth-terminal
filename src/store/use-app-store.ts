@@ -4,7 +4,7 @@ import { toast } from "sonner";
 
 import { dictionaries, detectLocale, fmt, type Locale } from "@/i18n/locales";
 import { sessionRegistry } from "@/lib/session-registry";
-import { forceClose, ptyList, shellsDetect, shutdownSessions } from "@/lib/pty";
+import { forceClose, ptyClose, ptyList, shellsDetect, shutdownSessions } from "@/lib/pty";
 import { DEFAULT_SETTINGS, type AppConfig, type AppSettings, type SessionStatus, type ShellInfo, type ShellKind } from "@/types";
 
 export type View = "apps" | "terminals" | "processes" | "settings";
@@ -135,6 +135,23 @@ export const useAppStore = create<AppState>()((set, get) => ({
     hydrating = true;
 
     await sessionRegistry.init();
+    sessionRegistry.onStopError((appId, sessionId, error) => {
+      const app = get().apps.find((entry) => entry.id === appId);
+      const notifyFailure = (detail: string) => {
+        const t = dictionaries[get().locale].toasts;
+        toast.error(fmt(t.restartCleanupFailed, { name: app?.name ?? appId }), {
+          description: detail,
+          duration: Infinity,
+          action: {
+            label: t.retryStop,
+            onClick: () => void ptyClose(sessionId).catch((cause: unknown) => {
+              notifyFailure(cause instanceof Error ? cause.message : String(cause));
+            }),
+          },
+        });
+      };
+      notifyFailure(error);
+    });
     sessionRegistry.onStatus((appId, status) => {
       set((s) => {
         const app = s.apps.find((a) => a.id === appId);

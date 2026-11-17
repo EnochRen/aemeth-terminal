@@ -5,6 +5,7 @@ import type { AppConfig, SessionStatus, ShellInfo } from "@/types";
 export const PTY_OUTPUT_EVENT = "pty://output";
 export const PTY_EXIT_EVENT = "pty://exit";
 export const PTY_PORTS_EVENT = "pty://ports";
+export const PTY_STOP_ERROR_EVENT = "pty://stop-error";
 export const HEALTH_EVENT = "aemeth://health";
 export const CLOSE_BLOCKED_EVENT = "aemeth://close-blocked";
 
@@ -54,6 +55,10 @@ export function ptyClose(sessionId: string): Promise<void> {
   return invoke("pty_close", { sessionId });
 }
 
+export function ptyCloseFast(sessionId: string): Promise<void> {
+  return invoke("pty_close_fast", { sessionId });
+}
+
 export function ptyList(): Promise<SessionStatus[]> {
   return invoke("pty_list");
 }
@@ -92,6 +97,10 @@ export function listenPtyOutput(handler: (payload: PtyOutputPayload) => void): P
 
 export function listenPtyExit(handler: (payload: SessionStatus) => void): Promise<UnlistenFn> {
   return listen<SessionStatus>(PTY_EXIT_EVENT, (e) => handler(e.payload));
+}
+
+export function listenPtyStopError(handler: (payload: { sessionId: string; appId: string; error: string }) => void): Promise<UnlistenFn> {
+  return listen<{ sessionId: string; appId: string; error: string }>(PTY_STOP_ERROR_EVENT, (e) => handler(e.payload));
 }
 
 export function listenPtyPorts(handler: (payload: PtyPortsPayload) => void): Promise<UnlistenFn> {

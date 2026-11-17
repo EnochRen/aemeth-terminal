@@ -119,6 +119,8 @@ struct PortsEvent {
 struct SessionHandle {
     /// Serializes tree cleanup with duplicate stops and the exit notification.
     close_lock: Mutex<()>,
+    stop_request: Mutex<StopRequest>,
+    stop_request_changed: Condvar,
     /// Keep failed descendants addressable even after their shell has exited.
     pending_tree: Mutex<Vec<(sysinfo::Pid, u64)>>,
     cleanup_changed: Condvar,
@@ -130,12 +132,31 @@ struct SessionHandle {
     name: String,
     shell: ShellKind,
     pid: Option<u32>,
+    /// Process creation time captured at spawn, to detect PID reuse at stop.
+    process_started_at: Option<u64>,
     started_at: u64,
     alive: AtomicBool,
     /// Set by `close()` — distinguishes user-initiated kills from natural
     /// exits in the emitted exit status.
     killed: AtomicBool,
     health_check_url: Option<String>,
+}
+
+#[derive(Clone, Default)]
+enum StopRequest {
+    #[default]
+    Idle,
+    Issuing,
+    Issued,
+    Failed(String),
+}
+
+fn publish_stop_request(session: &SessionHandle, result: &Result<(), String>) {
+    *session.stop_request.lock() = match result {
+        Ok(()) => StopRequest::Issued,
+        Err(error) => StopRequest::Failed(error.clone()),
+    };
+    session.stop_request_changed.notify_all();
 }
 
 #[derive(Default)]
@@ -234,14 +255,21 @@ impl PtyManager {
             script.configure(&mut cmd);
         }
 
+        // Keep a lower bound on the shell's creation time. If it exits before
+        // a stop snapshot, its PID could belong to an unrelated newer/older
+        // process; never identify the original tree by PID alone.
+        let started_at = now_ms();
         let mut child = pair.slave.spawn_command(cmd)?;
         let pid = child.process_id();
+        // Linux combines second-resolution boot time with a truncated process
+        // offset, which can lag wall-clock time by a second.
+        let earliest_start = (started_at / 1000).saturating_sub(2);
+        let process_started_at = pid.and_then(|pid| process_start_time(pid, earliest_start));
         let killer = child.clone_killer();
         let writer = pair.master.take_writer()?;
         let mut reader = pair.master.try_clone_reader()?;
 
         let session_id = uuid::Uuid::new_v4().simple().to_string();
-        let started_at = now_ms();
 
         let status = SessionStatus {
             session_id: session_id.clone(),
@@ -258,6 +286,8 @@ impl PtyManager {
 
         let handle = Arc::new(SessionHandle {
             close_lock: Mutex::new(()),
+            stop_request: Mutex::new(StopRequest::Idle),
+            stop_request_changed: Condvar::new(),
             pending_tree: Mutex::new(Vec::new()),
             cleanup_changed: Condvar::new(),
             writer: Mutex::new(writer),
@@ -267,6 +297,7 @@ impl PtyManager {
             name: spec.name.clone(),
             shell: spec.shell,
             pid,
+            process_started_at,
             started_at,
             alive: AtomicBool::new(true),
             killed: AtomicBool::new(false),
@@ -453,33 +484,165 @@ impl PtyManager {
     }
 
     fn close_until(&self, session_id: &str, deadline: Instant) -> Result<(), String> {
+        self.close_until_notifying(session_id, deadline, &mut None, &mut false)
+    }
+
+    /// Return as soon as every initial termination request has been issued.
+    /// The original session stays tracked while its cleanup continues.
+    pub fn close_fast(&self, session_id: &str, app: AppHandle) -> Result<(), String> {
+        let app_id = self
+            .inner
+            .sessions
+            .lock()
+            .get(session_id)
+            .map(|s| s.app_id.clone());
+        let id = session_id.to_owned();
+        self.close_fast_with_report(session_id, move |error| {
+            let _ = app.emit(
+                "pty://stop-error",
+                serde_json::json!({
+                    "sessionId": id,
+                    "appId": app_id,
+                    "error": error,
+                }),
+            );
+        })
+    }
+
+    fn close_fast_with_report(
+        &self,
+        session_id: &str,
+        report: impl FnOnce(String) + Send + 'static,
+    ) -> Result<(), String> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let manager = self.clone();
+        let session_id = session_id.to_owned();
+        std::thread::Builder::new()
+            .name(format!("pty-stop-{session_id}"))
+            .spawn(move || {
+                let mut notification = Some(tx);
+                let mut issued_success = false;
+                let result = manager.close_until_notifying(
+                    &session_id,
+                    Instant::now() + CLOSE_TIMEOUT,
+                    &mut notification,
+                    &mut issued_success,
+                );
+                if let Some(tx) = notification.take() {
+                    let _ = tx.send(result);
+                } else if issued_success {
+                    if let Err(error) = result {
+                        tracing::error!(%session_id, %error, "background session cleanup failed");
+                        report(error);
+                    }
+                }
+            })
+            .map_err(|e| e.to_string())?;
+        rx.recv()
+            .map_err(|_| "stop worker exited unexpectedly".to_string())?
+    }
+
+    fn close_until_notifying(
+        &self,
+        session_id: &str,
+        deadline: Instant,
+        notification: &mut Option<std::sync::mpsc::Sender<Result<(), String>>>,
+        issued_success: &mut bool,
+    ) -> Result<(), String> {
         let session = self.inner.sessions.lock().get(session_id).cloned();
         if let Some(session) = session {
+            let mut request = session.stop_request.lock();
+            let owner = match &*request {
+                StopRequest::Idle | StopRequest::Failed(_) => {
+                    *request = StopRequest::Issuing;
+                    true
+                }
+                StopRequest::Issuing | StopRequest::Issued => false,
+            };
+            if notification.is_some() && !owner {
+                while matches!(*request, StopRequest::Issuing) {
+                    if session
+                        .stop_request_changed
+                        .wait_until(&mut request, deadline)
+                        .timed_out()
+                        && matches!(*request, StopRequest::Issuing)
+                    {
+                        return Err(format!("timed out issuing stop for session '{session_id}'"));
+                    }
+                }
+                let result = match &*request {
+                    StopRequest::Issued => Ok(()),
+                    StopRequest::Failed(error) => Err(error.clone()),
+                    _ => Err("stop request was interrupted".into()),
+                };
+                if let Some(tx) = notification.take() {
+                    let _ = tx.send(result.clone());
+                }
+                return result;
+            }
+            drop(request);
             {
-                let _closing = session.close_lock.try_lock_until(deadline).ok_or_else(|| {
-                    format!("timed out waiting for session '{session_id}' to stop")
-                })?;
+                let _closing = match session.close_lock.try_lock_until(deadline) {
+                    Some(lock) => lock,
+                    None => {
+                        let error = format!("timed out waiting for session '{session_id}' to stop");
+                        if owner {
+                            publish_stop_request(&session, &Err(error.clone()));
+                        }
+                        return Err(error);
+                    }
+                };
                 if session.alive.load(Ordering::SeqCst)
                     && !session.killed.swap(true, Ordering::SeqCst)
                 {
                     // Snapshot descendants before killing the parent; otherwise
                     // reparented children can disappear from the tree.
                     let result = if let Some(pid) = session.pid {
-                        kill_tree(pid, &mut session.pending_tree.lock(), deadline, || {
-                            session.killer.lock().kill()
-                        })
+                        kill_tree(
+                            pid,
+                            session.process_started_at,
+                            &mut session.pending_tree.lock(),
+                            deadline,
+                            || session.killer.lock().kill(),
+                            |result| {
+                                if owner {
+                                    publish_stop_request(&session, &result);
+                                }
+                                if let Some(tx) = notification.take() {
+                                    *issued_success = result.is_ok();
+                                    let _ = tx.send(result);
+                                }
+                            },
+                        )
                     } else {
-                        session
+                        let result = session
                             .killer
                             .lock()
                             .kill()
-                            .map_err(|error| error.to_string())
+                            .map_err(|error| error.to_string());
+                        if owner {
+                            publish_stop_request(&session, &result);
+                        }
+                        if let Some(tx) = notification.take() {
+                            *issued_success = result.is_ok();
+                            let _ = tx.send(result.clone());
+                        }
+                        result
                     };
                     if let Err(error) = result {
+                        if owner {
+                            publish_stop_request(&session, &Err(error.clone()));
+                        }
                         session.killed.store(false, Ordering::SeqCst);
                         return Err(error);
                     }
                     session.cleanup_changed.notify_all();
+                } else if owner {
+                    publish_stop_request(&session, &Ok(()));
+                    if let Some(tx) = notification.take() {
+                        *issued_success = true;
+                        let _ = tx.send(Ok(()));
+                    }
                 }
             }
             let mut sessions = self.inner.sessions.lock();
@@ -491,9 +654,11 @@ impl PtyManager {
                     .timed_out()
                     && sessions.contains_key(session_id)
                 {
-                    return Err(format!(
-                        "timed out waiting for session '{session_id}' to exit"
-                    ));
+                    let error = format!("timed out waiting for session '{session_id}' to exit");
+                    if owner {
+                        publish_stop_request(&session, &Err(error.clone()));
+                    }
+                    return Err(error);
                 }
             }
         }
@@ -717,6 +882,68 @@ pub fn sessions_snapshot(manager: &PtyManager) -> Vec<(String, String, String)> 
         .collect()
 }
 
+fn process_start_time(pid: u32, earliest: u64) -> Option<u64> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+    let pid = Pid::from_u32(pid);
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::new(),
+    );
+    system
+        .process(pid)
+        .map(|process| process.start_time())
+        .filter(|&time| time != 0 && time >= earliest)
+}
+
+/// Collect only processes whose recorded parent could have existed when they
+/// started. Windows retains a terminated parent's PID, which can later be
+/// reused by an unrelated process. A PID-only traversal would then treat the
+/// older process as a descendant of the new one.
+fn process_tree_identities(
+    root: sysinfo::Pid,
+    expected_root_start: Option<u64>,
+    processes: impl IntoIterator<Item = (sysinfo::Pid, Option<sysinfo::Pid>, u64)>,
+) -> Vec<(sysinfo::Pid, u64)> {
+    let mut started = HashMap::new();
+    let mut children: HashMap<sysinfo::Pid, Vec<sysinfo::Pid>> = HashMap::new();
+    for (pid, parent, start_time) in processes {
+        started.insert(pid, start_time);
+        if let Some(parent) = parent {
+            children.entry(parent).or_default().push(pid);
+        }
+    }
+    // Without a root identity there is no safe way to distinguish its
+    // children from processes left behind by an earlier PID owner.
+    if !started
+        .get(&root)
+        .is_some_and(|&time| time != 0 && Some(time) == expected_root_start)
+    {
+        return Vec::new();
+    }
+    let mut targets = Vec::new();
+    let mut queue = VecDeque::from([root]);
+    let mut seen = HashSet::from([root]);
+    while let Some(pid) = queue.pop_front() {
+        let parent_start = started[&pid];
+        targets.push((pid, parent_start));
+        if let Some(kids) = children.get(&pid) {
+            for &kid in kids {
+                let child_start = started[&kid];
+                if parent_start != 0
+                    && child_start != 0
+                    && child_start >= parent_start
+                    && seen.insert(kid)
+                {
+                    queue.push_back(kid);
+                }
+            }
+        }
+    }
+    targets
+}
+
 /// Kill the process tree rooted at `pid`, **parents first**.
 ///
 /// Wrappers like pnpm/npm print their `ELIFECYCLE` farewell only when they
@@ -725,9 +952,11 @@ pub fn sessions_snapshot(manager: &PtyManager) -> Vec<(String, String, String)> 
 /// to 0 by the reaper (`killed` flag).
 fn kill_tree(
     root: u32,
+    expected_root_start: Option<u64>,
     targets: &mut Vec<(sysinfo::Pid, u64)>,
     deadline: Instant,
     fallback: impl FnOnce() -> std::io::Result<()>,
+    issued: impl FnOnce(Result<(), String>),
 ) -> Result<(), String> {
     use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
     // Killing needs only process identity and parentage, not CPU, memory,
@@ -735,44 +964,46 @@ fn kill_tree(
     let mut system =
         System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
     if targets.is_empty() {
-        let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
-        for (pid, proc) in system.processes() {
-            if let Some(parent) = proc.parent() {
-                children
-                    .entry(parent.as_u32())
-                    .or_default()
-                    .push(pid.as_u32());
-            }
-        }
-        let mut queue = VecDeque::from([root]);
-        let mut seen = HashSet::from([root]);
-        while let Some(pid) = queue.pop_front() {
-            if let Some(proc) = system.process(Pid::from_u32(pid)) {
-                targets.push((proc.pid(), proc.start_time()));
-            }
-            if let Some(kids) = children.get(&pid) {
-                for &kid in kids {
-                    if seen.insert(kid) {
-                        queue.push_back(kid);
-                    }
-                }
-            }
-        }
+        *targets = process_tree_identities(
+            Pid::from_u32(root),
+            expected_root_start,
+            system
+                .processes()
+                .values()
+                .map(|process| (process.pid(), process.parent(), process.start_time())),
+        );
     }
     // Retries use retained identities: children may have been reparented.
     // Never terminate a new process that reused one of their PIDs.
     let terminate = |system: &System, targets: &[(Pid, u64)]| {
+        let mut failures = Vec::new();
         for (pid, started) in targets {
             if let Some(process) = system.process(*pid).filter(|p| p.start_time() == *started) {
-                if !process.kill() {
-                    tracing::warn!(root, pid = %pid, name = ?process.name(), "process termination request failed");
+                if let Err(error) = request_termination(process) {
+                    tracing::warn!(root, pid = %pid, name = ?process.name(), %error, "process termination request failed");
+                    failures.push(format!("PID {pid}: {error}"));
                 }
             }
         }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
     };
-    terminate(&system, targets);
-    // The detached child handle is authoritative even if the snapshot missed it.
-    let _ = fallback();
+    let mut result = terminate(&system, targets);
+    // Without a captured root identity the detached handle is the only safe
+    // fallback. portable-pty's Windows killer cannot reliably report success,
+    // so do not claim that the whole tree was stopped in that case.
+    if expected_root_start.is_none() {
+        let _ = fallback();
+        if result.is_ok() {
+            result =
+                Err("cannot verify the session process identity; refresh and try again".into());
+        }
+    }
+    issued(result.clone());
+    result?;
     let pids: Vec<Pid> = targets.iter().map(|(pid, _)| *pid).collect();
     let mut retry_at = Instant::now() + Duration::from_millis(250);
     while !targets.is_empty() {
@@ -804,7 +1035,7 @@ fn kill_tree(
         // OS termination can fail transiently during process startup. Retry
         // only still-live identities, with a bounded interval and deadline.
         if Instant::now() >= retry_at {
-            terminate(&system, targets);
+            let _ = terminate(&system, targets);
             retry_at = Instant::now() + Duration::from_millis(250);
         }
         std::thread::sleep(Duration::from_millis(25));
@@ -812,10 +1043,109 @@ fn kill_tree(
     Ok(())
 }
 
+/// Issue a forceful termination without waiting for the process to exit.
+#[cfg(windows)]
+fn request_termination(process: &sysinfo::Process) -> Result<(), String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{
+        GetProcessTimes, OpenProcess, TerminateProcess, WaitForSingleObject,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+    };
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    let handle = unsafe {
+        OpenProcess(
+            PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE,
+            0,
+            process.pid().as_u32(),
+        )
+    };
+    if handle.is_null() {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(87) {
+            return Ok(());
+        }
+        // Windows can deny PROCESS_TERMINATE after a process has exited but
+        // before its object disappears. Check a synchronization-only handle.
+        let check = unsafe { OpenProcess(SYNCHRONIZE, 0, process.pid().as_u32()) };
+        if !check.is_null() {
+            let exited = unsafe { WaitForSingleObject(check, 0) } == WAIT_OBJECT_0;
+            unsafe {
+                CloseHandle(check);
+            }
+            if exited {
+                return Ok(());
+            }
+        }
+        return Err(error.to_string());
+    }
+    let result = (|| {
+        let mut creation = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let mut exit = creation;
+        let mut kernel = creation;
+        let mut user = creation;
+        if unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) } == 0
+        {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        let ticks = (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime);
+        let start = (ticks / 10_000_000).saturating_sub(11_644_473_600);
+        if start != process.start_time() {
+            return Ok(());
+        }
+        if unsafe { TerminateProcess(handle, 1) } == 0 {
+            let error = std::io::Error::last_os_error();
+            if unsafe { WaitForSingleObject(handle, 0) } != WAIT_OBJECT_0 {
+                return Err(error.to_string());
+            }
+        }
+        Ok(())
+    })();
+    unsafe {
+        CloseHandle(handle);
+    }
+    result
+}
+
+#[cfg(not(windows))]
+fn request_termination(process: &sysinfo::Process) -> Result<(), String> {
+    if process.kill() {
+        Ok(())
+    } else {
+        Err("termination request failed".into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::{atomic::AtomicUsize, mpsc};
+
+    #[test]
+    fn process_tree_rejects_stale_parent_pids_and_unknown_start_times() {
+        use sysinfo::Pid;
+        let pid = Pid::from_u32;
+        let processes = [
+            (pid(100), None, 200),
+            // A normal child may have the same second-resolution timestamp.
+            (pid(101), Some(pid(100)), 200),
+            (pid(102), Some(pid(101)), 201),
+            // The parent PID was reused after this process was created.
+            (pid(103), Some(pid(100)), 100),
+            (pid(104), Some(pid(103)), 101),
+            (pid(105), Some(pid(100)), 0),
+        ];
+        let targets = process_tree_identities(pid(100), Some(200), processes);
+        assert_eq!(
+            targets,
+            vec![(pid(100), 200), (pid(101), 200), (pid(102), 201)]
+        );
+        assert!(process_tree_identities(pid(999), Some(200), processes).is_empty());
+        assert!(process_tree_identities(pid(100), Some(201), processes).is_empty());
+        assert!(process_tree_identities(pid(100), None, processes).is_empty());
+    }
 
     struct TestMaster;
     impl MasterPty for TestMaster {
@@ -888,6 +1218,8 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let session = Arc::new(SessionHandle {
             close_lock: Mutex::new(()),
+            stop_request: Mutex::new(StopRequest::Idle),
+            stop_request_changed: Condvar::new(),
             pending_tree: Mutex::new(Vec::new()),
             cleanup_changed: Condvar::new(),
             writer: Mutex::new(Box::new(std::io::sink())),
@@ -901,6 +1233,7 @@ mod tests {
             name: id.into(),
             shell: ShellKind::Cmd,
             pid: None,
+            process_started_at: None,
             started_at: 0,
             alive: AtomicBool::new(true),
             killed: AtomicBool::new(false),
@@ -919,6 +1252,80 @@ mod tests {
         session.alive.store(false, Ordering::SeqCst);
         manager.inner.sessions.lock().remove(id);
         manager.inner.sessions_changed.notify_all();
+    }
+
+    #[test]
+    fn fast_stop_returns_after_request_without_waiting_for_reaper() {
+        let manager = PtyManager::new();
+        let (session, entered, release, _) = insert_session(&manager, "fast");
+        let (done_tx, done_rx) = mpsc::channel();
+        let worker = manager.clone();
+        std::thread::spawn(move || {
+            let result = worker.close_fast_with_report("fast", |_| {});
+            done_tx.send(result).unwrap();
+        });
+        entered.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(
+            done_rx.try_recv().is_err(),
+            "must wait until the kill request is issued"
+        );
+        release.send(true).unwrap();
+        done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        assert_eq!(manager.running_count(), 1, "reaper has not run yet");
+        reap(&manager, "fast", &session);
+    }
+
+    #[test]
+    fn fast_stop_reports_initial_failure_to_caller() {
+        let manager = PtyManager::new();
+        let (session, entered, release, _) = insert_session(&manager, "failed-fast");
+        let (done_tx, done_rx) = mpsc::channel();
+        let (error_tx, error_rx) = mpsc::channel();
+        let worker = manager.clone();
+        std::thread::spawn(move || {
+            let result = worker.close_fast_with_report("failed-fast", move |e| {
+                let _ = error_tx.send(e);
+            });
+            done_tx.send(result).unwrap();
+        });
+        entered.recv_timeout(Duration::from_secs(2)).unwrap();
+        release.send(false).unwrap();
+        assert!(done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .is_err());
+        assert!(error_rx.recv_timeout(Duration::from_millis(100)).is_err());
+        reap(&manager, "failed-fast", &session);
+    }
+
+    #[test]
+    fn fast_stop_joins_inflight_stop_before_reaper_finishes() {
+        let manager = PtyManager::new();
+        let (session, entered, release, calls) = insert_session(&manager, "shared");
+        std::thread::scope(|scope| {
+            let normal = scope.spawn(|| manager.close("shared"));
+            entered.recv_timeout(Duration::from_secs(2)).unwrap();
+            let (done_tx, done_rx) = mpsc::channel();
+            let worker = manager.clone();
+            std::thread::spawn(move || {
+                done_tx
+                    .send(worker.close_fast_with_report("shared", |_| {}))
+                    .unwrap();
+            });
+            assert!(done_rx.try_recv().is_err());
+            release.send(true).unwrap();
+            done_rx
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .unwrap();
+            assert_eq!(manager.running_count(), 1);
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+            reap(&manager, "shared", &session);
+            normal.join().unwrap().unwrap();
+        });
     }
 
     #[test]
@@ -1043,12 +1450,15 @@ mod tests {
     fn check_windows_tree_cleanup(root_already_exited: bool) {
         use std::os::windows::process::CommandExt;
         use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+        let earliest_start = (now_ms() / 1000).saturating_sub(2);
         let mut root = std::process::Command::new("cmd.exe")
             .args(["/D", "/C", "ping -n 30 127.0.0.1 > NUL"])
             .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
             .spawn()
             .unwrap();
         let root_pid = Pid::from_u32(root.id());
+        let root_start = process_start_time(root.id(), earliest_start);
+        assert!(root_start.is_some(), "test root identity was not captured");
         let mut system = System::new();
         let deadline = Instant::now() + Duration::from_secs(5);
         let child_pid = loop {
@@ -1079,9 +1489,11 @@ mod tests {
         }
         let result = kill_tree(
             root.id(),
+            root_start,
             &mut targets,
             Instant::now() + CLOSE_TIMEOUT,
             || root.kill(),
+            |_| {},
         );
         system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::new());
         let root_exited = system.process(root_pid).is_none();

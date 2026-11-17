@@ -79,6 +79,16 @@ async fn pty_close(
 }
 
 #[tauri::command]
+async fn pty_close_fast(
+    manager: tauri::State<'_, PtyManager>,
+    app: tauri::AppHandle,
+    session_id: String,
+) -> Result<(), String> {
+    let manager = manager.inner().clone();
+    blocking::run(move || manager.close_fast(&session_id, app)).await
+}
+
+#[tauri::command]
 fn pty_list(manager: tauri::State<PtyManager>) -> Vec<SessionStatus> {
     manager.list()
 }
@@ -115,9 +125,9 @@ async fn process_list() -> Result<Vec<procs::ProcessInfo>, String> {
 }
 
 #[tauri::command]
-async fn process_kill(pid: u32) -> Result<usize, String> {
+async fn process_kill(pid: u32, start_time: u64) -> Result<usize, String> {
     tracing::info!(%pid, "killing process tree");
-    blocking::run(move || procs::kill_tree(pid))
+    blocking::run(move || procs::kill_tree(pid, start_time))
         .await
         .map_err(|e| {
             tracing::error!(%pid, error = %e, "failed to kill process tree");
@@ -222,6 +232,7 @@ pub fn run() {
             pty_write,
             pty_resize,
             pty_close,
+            pty_close_fast,
             pty_list,
             shells_detect,
             write_text_file,

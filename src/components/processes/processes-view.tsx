@@ -154,13 +154,14 @@ export function ProcessesView() {
     const target = killTarget;
     setKillTarget(null);
     try {
-      const n = await processKill(target.pid);
+      const n = await processKill(target.pid, target.startTime);
       toast.success(fmt(t.proc.killed, { n }));
-      void refresh();
     } catch (err) {
       toast.error(t.proc.killFailed, {
         description: err instanceof Error ? err.message : String(err),
       });
+    } finally {
+      void refresh();
     }
   };
 

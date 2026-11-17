@@ -16,10 +16,34 @@ pub struct ProcessTable {
 impl ProcessTable {
     pub fn snapshot() -> Self {
         let system = sysinfo::System::new_all();
+        Self::from_processes(system.processes().iter().map(|(pid, process)| {
+            (
+                pid.as_u32(),
+                process.parent().map(|parent| parent.as_u32()),
+                process.start_time(),
+            )
+        }))
+    }
+
+    fn from_processes(processes: impl IntoIterator<Item = (u32, Option<u32>, u64)>) -> Self {
+        let processes: Vec<_> = processes.into_iter().collect();
+        let starts: HashMap<u32, u64> = processes
+            .iter()
+            .map(|&(pid, _, started)| (pid, started))
+            .collect();
         let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
-        for (pid, process) in system.processes() {
-            if let Some(parent) = process.parent() {
-                children.entry(parent.as_u32()).or_default().push(pid.as_u32());
+        for (pid, parent, started) in processes {
+            if let Some(parent) = parent {
+                // Windows can retain an exited parent's PID, which may now
+                // belong to a newer unrelated process. Start times are in
+                // seconds, so equality remains plausible. Unknown times
+                // cannot establish parentage and must not attribute ports.
+                if !starts.get(&parent).is_some_and(|&parent_started| {
+                    started != 0 && parent_started != 0 && parent_started <= started
+                }) {
+                    continue;
+                }
+                children.entry(parent).or_default().push(pid);
             }
         }
         Self { children }
@@ -92,7 +116,9 @@ fn netstat_windows() -> HashMap<u32, Vec<u16>> {
         if tokens.len() != 5 || tokens[0] != "TCP" || tokens[3] != "LISTENING" {
             continue;
         }
-        let Ok(pid) = tokens[4].parse::<u32>() else { continue };
+        let Ok(pid) = tokens[4].parse::<u32>() else {
+            continue;
+        };
         if let Some(port) = port_of(tokens[1]) {
             map.entry(pid).or_default().push(port);
         }
@@ -109,7 +135,9 @@ fn lsof_unix() -> HashMap<u32, Vec<u16>> {
         if tokens.len() < 10 || tokens[7] != "TCP" {
             continue;
         }
-        let Ok(pid) = tokens[1].parse::<u32>() else { continue };
+        let Ok(pid) = tokens[1].parse::<u32>() else {
+            continue;
+        };
         if let Some(port) = port_of(tokens[8]) {
             map.entry(pid).or_default().push(port);
         }
@@ -129,7 +157,9 @@ fn ss_linux() -> HashMap<u32, Vec<u16>> {
         let Some(pid_token) = tokens.iter().find(|t| t.contains("pid=")) else {
             continue;
         };
-        let Some(pid_part) = pid_token.split("pid=").nth(1) else { continue };
+        let Some(pid_part) = pid_token.split("pid=").nth(1) else {
+            continue;
+        };
         let Ok(pid) = pid_part
             .split(|c: char| !c.is_ascii_digit())
             .next()
@@ -143,4 +173,25 @@ fn ss_linux() -> HashMap<u32, Vec<u16>> {
         }
     }
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProcessTable;
+    use std::collections::HashSet;
+
+    #[test]
+    fn descendants_exclude_children_from_an_older_reused_parent_pid() {
+        let table = ProcessTable::from_processes([
+            (10, None, 200),
+            (20, Some(10), 100), // Child of the previous process with PID 10.
+            (21, Some(20), 150),
+            (30, Some(10), 200), // Same-second timestamps remain plausible.
+            (31, Some(30), 201),
+            (40, Some(10), 0), // Unknown start time cannot establish parentage.
+            (50, Some(40), 202),
+            (60, Some(99), 202), // Parent absent from the snapshot.
+        ]);
+        assert_eq!(table.descendants(10), HashSet::from([10, 30, 31]));
+    }
 }
