@@ -1097,7 +1097,12 @@ fn request_termination(process: &sysinfo::Process) -> Result<(), String> {
         }
         if unsafe { TerminateProcess(handle, 1) } == 0 {
             let error = std::io::Error::last_os_error();
-            if unsafe { WaitForSingleObject(handle, 0) } != WAIT_OBJECT_0 {
+            // Windows may refuse a second termination while a process is
+            // already exiting but before its handle becomes signaled. Give
+            // only this failure case a brief chance to finish before
+            // reporting a real access error to the caller.
+            let wait_ms = if error.raw_os_error() == Some(5) { 50 } else { 0 };
+            if unsafe { WaitForSingleObject(handle, wait_ms) } != WAIT_OBJECT_0 {
                 return Err(error.to_string());
             }
         }
@@ -1470,9 +1475,18 @@ mod tests {
             if let Some(child) = system
                 .processes()
                 .values()
-                .find(|p| p.parent() == Some(root_pid))
+                // Windows retains a dead parent's PID, so another process may
+                // still report this newly spawned shell's reused PID. Only
+                // select the ping started by this test and never a process
+                // whose recorded creation predates the shell.
+                .find(|p| {
+                    p.parent() == Some(root_pid)
+                        && p.name().to_string_lossy().eq_ignore_ascii_case("ping.exe")
+                        && p.start_time() != 0
+                        && p.start_time() >= root_start.unwrap()
+                })
             {
-                break Some(child.pid());
+                break Some((child.pid(), child.start_time()));
             }
             if Instant::now() >= deadline {
                 break None;
@@ -1481,8 +1495,8 @@ mod tests {
         };
         let mut targets = Vec::new();
         if root_already_exited {
-            if let Some(child) = child_pid.and_then(|pid| system.process(pid)) {
-                targets.push((child.pid(), child.start_time()));
+            if let Some(child) = child_pid {
+                targets.push(child);
             }
             root.kill().unwrap();
             root.wait().unwrap();
@@ -1497,9 +1511,13 @@ mod tests {
         );
         system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::new());
         let root_exited = system.process(root_pid).is_none();
-        let child_exited = child_pid.is_some_and(|pid| system.process(pid).is_none());
+        let child_exited = child_pid.is_some_and(|(pid, started)| {
+            system.process(pid).is_none_or(|process| process.start_time() != started)
+        });
         // Cleanup remains best effort even when an assertion below fails.
-        if let Some(child) = child_pid.and_then(|pid| system.process(pid)) {
+        if let Some(child) = child_pid.and_then(|(pid, started)| {
+            system.process(pid).filter(|process| process.start_time() == started)
+        }) {
             let _ = child.kill();
         }
         let _ = root.kill();

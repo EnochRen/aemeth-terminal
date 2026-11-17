@@ -17,6 +17,7 @@ dependencies = [
  "chrono",
  "dirs",
  "flate2",
+ "image",
  "open",
  "parking_lot",
  "portable-pty",

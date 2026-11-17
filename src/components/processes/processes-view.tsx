@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Info, RefreshCw, Search, Square, X } from "lucide-react";
+import { File, Info, RefreshCw, Search, Square, X } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -25,6 +25,7 @@ import { Sparkline } from "@/components/shared/sparkline";
 import { fmt } from "@/i18n/locales";
 import { useT } from "@/i18n/use-t";
 import { processDetail as fetchDetail, processKill, processList } from "@/lib/proc";
+import { getProcessIcon } from "@/lib/process-icons";
 import { cn } from "@/lib/utils";
 import type { ProcessDetail, ProcessInfo } from "@/types";
 
@@ -33,6 +34,71 @@ type SortKey = "name" | "pid" | "memory" | "cpu" | "start";
 
 const POLL_MS = 2000;
 const MAX_SAMPLES = 30; // 60 seconds at 2 s intervals
+
+// Share one observer across rows and only load icons near the viewport.
+const iconObservers = new WeakMap<Element, () => void>();
+let iconObserver: IntersectionObserver | undefined;
+
+function observeIcon(element: Element, load: () => void): () => void {
+  if (typeof IntersectionObserver === "undefined") {
+    load();
+    return () => {};
+  }
+  iconObserver ??= new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      iconObserver?.unobserve(entry.target);
+      const callback = iconObservers.get(entry.target);
+      iconObservers.delete(entry.target);
+      callback?.();
+    }
+  }, { rootMargin: "100px" });
+  iconObservers.set(element, load);
+  iconObserver.observe(element);
+  return () => {
+    iconObserver?.unobserve(element);
+    iconObservers.delete(element);
+  };
+}
+
+function ProcessIcon({ exe }: { exe: string | null }) {
+  const element = useRef<HTMLSpanElement>(null);
+  const [icon, setIcon] = useState<string | null>(null);
+
+  useEffect(() => {
+    setIcon(null);
+    if (!exe || !element.current) return;
+    let cancelled = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const unobserve = observeIcon(element.current, () => {
+      let attempts = 0;
+      const load = () => {
+        attempts++;
+        void getProcessIcon(exe).then((value) => {
+          if (!cancelled) setIcon(value);
+        }).catch(() => {
+          if (!cancelled && attempts < 3) retry = setTimeout(load, 5000);
+        });
+      };
+      load();
+    });
+    return () => {
+      cancelled = true;
+      if (retry) clearTimeout(retry);
+      unobserve();
+    };
+  }, [exe]);
+
+  return (
+    <span ref={element} aria-hidden="true" className="flex size-4 shrink-0 items-center justify-center">
+      {icon ? (
+        <img src={icon} alt="" draggable={false} className="size-4 object-contain" />
+      ) : (
+        <File className="size-3.5 text-[#666]" />
+      )}
+    </span>
+  );
+}
 
 function fmtMem(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -240,7 +306,10 @@ export function ProcessesView() {
                 className="border-b border-border/50 transition-colors hover:bg-accent/40"
               >
                 <td className="max-w-0 truncate px-5 py-1.5 text-foreground" style={{ width: "26%" }}>
-                  {p.name}
+                  <div className="flex min-w-0 items-center gap-2">
+                    <ProcessIcon exe={p.exe} />
+                    <span className="truncate">{p.name}</span>
+                  </div>
                 </td>
                 <td className="px-2 py-1.5 text-right text-[#a1a1a1]">{p.pid}</td>
                 <td className="px-2 py-1.5">

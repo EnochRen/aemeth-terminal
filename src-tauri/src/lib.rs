@@ -4,6 +4,7 @@ mod logger;
 mod ports;
 mod preset;
 mod procs;
+mod process_icons;
 mod pty;
 mod shells;
 mod update;
@@ -125,6 +126,11 @@ async fn process_list() -> Result<Vec<procs::ProcessInfo>, String> {
 }
 
 #[tauri::command]
+async fn process_icons(exes: Vec<String>) -> Result<std::collections::HashMap<String, Option<String>>, String> {
+    blocking::run(move || Ok(process_icons::get_icons(exes))).await
+}
+
+#[tauri::command]
 async fn process_kill(pid: u32, start_time: u64) -> Result<usize, String> {
     tracing::info!(%pid, "killing process tree");
     blocking::run(move || procs::kill_tree(pid, start_time))
@@ -238,6 +244,7 @@ pub fn run() {
             write_text_file,
             read_text_file,
             process_list,
+            process_icons,
             process_kill,
             process_detail,
             close_force,
